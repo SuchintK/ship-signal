@@ -19,4 +19,3 @@ The project is in the design stage. The repository currently contains the settle
 ## Documentation
 
 - [Documentation index](docs/README.md)
-- [Settled product design and open decisions](docs/01-grill-session/README.md)
