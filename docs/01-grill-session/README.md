@@ -1,6 +1,6 @@
 # 01 — Grill session: settled product design
 
-This record consolidates the decisions agreed during the grill session. It includes the later changes to database support, ticket eligibility, rejected-feature cooldowns, model independence, and approval semantics. Earlier alternatives are not current requirements.
+This record consolidates the decisions agreed during the grill session and the subsequent MVP review. It includes the later changes to database support, ticket eligibility, rejected-feature cooldowns, model independence, approval semantics, and MVP scope reductions. Earlier alternatives are not current requirements.
 
 ## 1. Product and audience
 
@@ -103,18 +103,13 @@ The 90 days is a rejection cooldown, not a rolling feedback-analysis window. Sup
 
 Approval happens in **Linear**, through an explicit **"Approved for implementation"** status or equivalent configured action.
 
-Ship Signal verifies that the actor is a configured approver and saves a snapshot of the scope and ticket content being approved. A status change by an unauthorized actor does not authorize execution.
+Ship Signal verifies that the actor is a configured approver. A status change by an unauthorized actor does not authorize execution.
 
-| Timing or type of change | Behavior |
-| --- | --- |
-| Additions before approval | Include them in the latest scope being approved and implemented, subject to supported scope. |
-| Material changes after approval but before coding | Require renewed approval before implementation starts. |
-| Material changes during implementation | Pause execution, preserve progress, and request approval of the revised scope. |
-| Typos, formatting, or background information that does not change requirements | No renewed approval is required. |
+For MVP, the team handles requirement changes after approval manually, including changes during implementation. The team is responsible for clarifying and approving changed scope; Ship Signal must still respect the bounded implementation requirements in section 7.
 
-For example, adding email delivery to the description before approval makes it part of the proposed work. Adding multiple recipients after approval expands authorized behavior and requires renewed approval.
+Scope snapshots, versioned approval records, approval receipts, version-specific approval commands, automated scope-change detection, and automatic pause/reapproval workflows are deferred to future scope. They are not MVP requirements.
 
-Approval authorizes a specific scope, not an indefinitely changing description. Ambiguous changes should not silently become implementation instructions.
+The rationale and trade-offs are recorded in [ADR-0002](../03-adr/0002-defer-versioned-approval-for-mvp.md).
 
 ## 10. Weekend execution and failure handling
 
@@ -124,7 +119,7 @@ Approval authorizes a specific scope, not an indefinitely changing description. 
 - Use bounded attempts within the approved scope.
 - Stop cleanly at a configurable **Sunday-evening cutoff**.
 - Preserve unfinished progress and report obstacles or unfinished work. A person decides whether to retry.
-- Expanded scope requires renewed approval.
+- Expanded scope requires renewed human approval; the team coordinates requirement changes manually in MVP.
 
 Linear approval records authorization; it does not immediately start coding on Friday. Falling demand does not automatically cancel already-approved work.
 
@@ -138,23 +133,34 @@ A person reviews and merges it. Opening a PR alone is not sufficient proof of su
 
 The **entire product runs on customer infrastructure**, including feedback analysis, ticket generation, and implementation.
 
+For MVP, each installation uses one host, one execution service coordinating work, and a SQLite application database on persistent local storage. Multiple active execution hosts and direct sharing of the database file over a network filesystem are outside the supported deployment. Different repositories may still run independently, with one implementation at a time per repository. See [ADR-0003](../03-adr/0003-use-sqlite-for-single-host-mvp-state.md).
+
 Customers supply credentials for external AI providers. Document the feedback and code sent to the selected provider. Installation requires a public HTTPS endpoint for Linear webhook delivery.
+
+For implementation testing, customers provide a development/test application environment and credentials for a dedicated **application test account**. This is an application login, not a dedicated database user. Ship Signal does not need to provision a test database for MVP. Handling shared-database interference, including test data and migration conflicts, is deferred to future scope.
+
+Ship Signal does not require or manage restricted containers, disposable execution environments, or dedicated isolated workers for MVP. Customers decide whether and how to isolate execution in their own infrastructure, including optional Docker configuration.
+
+The rationale and trade-offs are recorded in [ADR-0001](../03-adr/0001-leave-execution-isolation-to-customers-for-mvp.md).
 
 Only the current weekly interval contributes to demand percentages. Preserve ticket evidence and execution records under a documented retention policy; leave the customer's original database records untouched. The exact retention duration remains to be chosen.
 
 The getting-started documentation must cover the database contract, database choice, Linear/GitHub configuration, credentials, repository requirements, timezone/schedule configuration, and public HTTPS webhook requirement.
 
-## 13. LangGraph and model independence
+## 13. Rust, Rig, and model independence
 
 The agreed architecture uses:
 
-- **LangGraph** for orchestration, checkpoints, pauses, retries, and resumption.
-- **LangChain model integrations** for access to supported model providers.
+- **Rust** for the CLI and the single-host execution service.
+- **Rig** for model-provider integrations, structured outputs, and tool-using agent loops.
+- **Ship Signal's persisted Rust workflow state machine** for orchestration, checkpoints, pauses, retries, and resumption, using Rig's agent-run capabilities where appropriate.
 - **Ship Signal code** for deterministic demand calculations, scheduling, approval verification, integrations, and execution boundaries.
+
+Rust and Rig replace the earlier LangGraph/LangChain choice. Ship Signal owns persistence and recovery across the full product workflow; saving an agent run alone does not establish repository ownership or confirm the outcome of an external write.
 
 Support separate model selection for analysis and implementation. Qualify each supported model against the capabilities required by its assigned tasks; classifying feedback and implementing code have different requirements.
 
-Use durable writable application storage for workflow state, separate from the read-only feedback connection. Make retries safe against duplicate Linear tickets and GitHub PRs, including operations that may repeat after resumption.
+Use SQLite as durable writable application storage for workflow state, separate from the read-only PostgreSQL or MySQL feedback connection. The storage and single-host deployment choice is recorded in [ADR-0003](../03-adr/0003-use-sqlite-for-single-host-mvp-state.md). Make retries safe against duplicate Linear tickets and GitHub PRs, including operations that may repeat after resumption. SQLite write locking does not replace repository ownership or external-write recovery rules; the detailed mechanisms remain open.
 
 Start with tested external-provider integrations and keep the interface extensible for local models later. Specific provider/model names have not yet been selected. Custom adapters are needed only where existing supported integrations are insufficient.
 
@@ -173,5 +179,14 @@ The following have not been settled and must not be treated as approved choices:
 - Exact SQL view definitions, field types, and setup validation details for PostgreSQL and MySQL.
 - The precise boundary used to match the "same or similar" feature for cooldown enforcement.
 - Exact retention durations and numerical defaults for bounded attempts and the Sunday cutoff.
+- Application-state schemas and authority, repository ownership and subprocess recovery, external-operation identity and reconciliation, and SQLite configuration and backup procedures within the accepted single-host deployment.
+- Workflow checkpoint boundaries and Rig agent-run persistence/resumption within the Rust execution service.
 
 These details must preserve the settled product behavior above.
+
+## Future scope
+
+- Versioned approval and scope snapshots, approval receipts, and automated detection and handling of post-approval requirement changes. MVP uses basic Linear approval and manual coordination of scope changes.
+- Shared development/test database interference, including conflicts affecting other users' data or shared schemas during tests and migrations. MVP relies on a customer-provided application test account and development/test environment.
+
+Product-managed execution isolation is outside MVP. Customers may choose to configure their own Docker or other isolation; a future Ship Signal isolation feature has not been committed to.

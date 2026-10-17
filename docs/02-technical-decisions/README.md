@@ -4,7 +4,7 @@ This document preserves the ten findings from the technical review and the decis
 
 The repository contains design documentation and ADRs; implementation has not started. The [product design](../01-grill-session/README.md) defines the agreed behavior. [Accepted ADRs](../03-adr/README.md) preserve architectural decisions and their rationale. Recommendations below are proposals unless explicitly marked as accepted.
 
-Points 1 and 2 have been discussed and settled for MVP. Points 3–10 remain open. Deferred features must not be treated as MVP requirements. No specific future implementation of those features has been approved.
+Points 1 and 2 have been discussed and settled for MVP. Point 3 is partially settled: Rust, Rig, SQLite, and single-host deployment are accepted; detailed concurrency and recovery mechanisms remain open. Points 4–10 remain open. Deferred features must not be treated as MVP requirements. No specific future implementation of those features has been approved.
 
 ## Decision index
 
@@ -12,7 +12,7 @@ Points 1 and 2 have been discussed and settled for MVP. Points 3–10 remain ope
 | --- | --- | --- | --- |
 | [1](#1-approval-provenance-and-scope-versioning) | Approval provenance and scope versioning | Advanced controls deferred; basic approval retained | Accepted [ADR-0002](../03-adr/0002-defer-versioned-approval-for-mvp.md) |
 | [2](#2-execution-environment-and-credential-access) | Execution environment and credential access | Isolation customer-managed; shared-database handling deferred | Accepted [ADR-0001](../03-adr/0001-leave-execution-isolation-to-customers-for-mvp.md) |
-| [3](#3-durable-state-concurrency-and-external-write-recovery) | Durable state, concurrency, and external-write recovery | Open | ADR recommended |
+| [3](#3-durable-state-concurrency-and-external-write-recovery) | Durable state, concurrency, and external-write recovery | Rust/Rig and SQLite single-host deployment accepted; recovery details open | Storage/deployment: accepted [ADR-0003](../03-adr/0003-use-sqlite-for-single-host-mvp-state.md) |
 | [4](#4-weekend-scheduling-and-recovery) | Weekend scheduling and recovery | Open | ADR worth considering |
 | [5](#5-feedback-contract-reproducibility-and-corrections) | Feedback contract, reproducibility, and corrections | Open | ADR recommended |
 | [6](#6-feature-identity-grouping-and-cooldown-matching) | Feature identity, grouping, and cooldown matching | Open | ADR worth considering |
@@ -23,7 +23,7 @@ Points 1 and 2 have been discussed and settled for MVP. Points 3–10 remain ope
 
 ## 1. Approval provenance and scope versioning
 
-**Status: settled for MVP; advanced controls deferred.** See [product design section 9](../01-grill-session/README.md#9-approval-and-ticket-changes) and [ADR-0002](../03-adr/0002-defer-versioned-approval-for-mvp.md).
+**Status: settled for MVP; advanced controls deferred.** See [product design section 9](../01-grill-session/README.md) and [ADR-0002](../03-adr/0002-defer-versioned-approval-for-mvp.md).
 
 **Original concern:** an approved ticket can change before or during implementation. Reading its latest description does not by itself establish what the approver authorized. Delayed notifications can complicate capturing the approved content.
 
@@ -39,7 +39,7 @@ Points 1 and 2 have been discussed and settled for MVP. Points 3–10 remain ope
 
 ## 2. Execution environment and credential access
 
-**Status: settled for MVP; isolation is customer-managed.** See [product design section 12](../01-grill-session/README.md#12-deployment-credentials-and-retention) and [ADR-0001](../03-adr/0001-leave-execution-isolation-to-customers-for-mvp.md).
+**Status: settled for MVP; isolation is customer-managed.** See [product design section 12](../01-grill-session/README.md) and [ADR-0001](../03-adr/0001-leave-execution-isolation-to-customers-for-mvp.md).
 
 **Original concern:** installing dependencies, running tests, and executing generated code can affect files, credentials, services, and resources accessible to the execution environment. Customer hosting does not specify an isolation boundary.
 
@@ -57,29 +57,35 @@ For implementation testing, the customer provides a development/test application
 
 ## 3. Durable state, concurrency, and external-write recovery
 
-**Status: open.** See [product design section 13](../01-grill-session/README.md#13-langgraph-and-model-independence).
+**Status: partially settled for MVP; Rust, Rig, SQLite, and single-host deployment accepted.** See [product design sections 12 and 13](../01-grill-session/README.md) and [ADR-0003 for storage and deployment](../03-adr/0003-use-sqlite-for-single-host-mvp-state.md). Detailed concurrency and external-write recovery mechanisms remain open.
 
-**Settled constraints:** use LangGraph, durable writable application storage separate from the read-only feedback connection, duplicate-safe Linear/GitHub operations, and one implementation at a time per repository.
+**Settled constraints:** use Rust for the CLI and execution service, Rig for the AI layer, a persisted Rust workflow state machine for product orchestration, durable writable application storage separate from the read-only feedback connection, duplicate-safe Linear/GitHub operations, and one implementation at a time per repository.
 
-**Why it matters:** a ticket could be created just before the process loses the API response. Retrying blindly could create another ticket. A restarted worker could overlap with an executor still running. Graph checkpoints do not define the application's external-write and ownership rules.
+**Accepted framework decision:** Rust and Rig replace the earlier LangGraph/LangChain choice. Rig supplies model integrations and agent capabilities; Ship Signal's Rust workflow code owns scheduling, approval checks, durable progress, retries, and recovery. Rig agent-run persistence can support individual agent steps; its integration with the full workflow remains to be specified.
+
+**Accepted storage and deployment decision:** use SQLite for application state on persistent local storage, with one host and one execution service coordinating each installation. Different repositories may run independently. Multiple active execution hosts, separate SQLite files coordinating the same installation, and direct access to the database file over a network filesystem are outside the supported deployment. PostgreSQL and MySQL remain supported feedback sources.
+
+**Why it matters:** a ticket could be created just before the process loses the API response. Retrying blindly could create another ticket. A restarted worker could overlap with an executor still running. Workflow checkpoints and saved Rig agent runs do not define the application's external-write and ownership rules.
 
 **Questions to resolve:**
 
-- Which application storage engine and runtime will be supported initially?
+- Which Rust runtime and process lifecycle will implement the single-host execution service?
+- Where are workflow checkpoints saved, and how are Rig agent runs persisted and resumed within them?
 - Which records are authoritative for runs, schedules, repository ownership, and external operations?
 - How are uncertain API results reconciled before retrying?
-- How is concurrent execution prevented, including after a restart or expired worker lease?
-- What identifies an operation across retries, while allowing a legitimately new ticket after rejection cooldown?
+- How is repository ownership enforced, including duplicate launches and subprocesses surviving a restart? If leases are used, how is takeover made safe when a lease expires?
+- How is an operation's identity persisted and correlated with external results across retries, while allowing a legitimately new ticket after rejection cooldown?
+- Which SQLite settings, contention handling, and backup/restore procedures will be supported?
 
-**Alternatives:** SQLite with an explicit single-host constraint; PostgreSQL-backed application state and coordination; or additional queue/coordination infrastructure.
+**Alternatives considered:** SQLite with an explicit single-host constraint; PostgreSQL-backed application state and coordination; or additional queue/coordination infrastructure. SQLite was selected to simplify MVP setup and operation.
 
-**Review recommendation, not yet accepted:** favor one PostgreSQL application store, persist operation intents/results, reconcile uncertain writes, and prevent replaced workers from publishing. Supporting MySQL feedback does not require MySQL application-state storage. Validate restart and response-loss scenarios before selecting the mechanism.
+**Earlier review recommendation, not adopted as the storage choice:** favor one PostgreSQL application store. The discussion selected SQLite instead. Durable operation records, reconciliation of uncertain writes, and preventing replaced workers from publishing remain recovery concerns; their concrete mechanisms are not yet selected. SQLite serializes database writes, not whole implementations or external API calls. Validate restart and response-loss scenarios before selecting those mechanisms.
 
-**ADR assessment: recommended.** Storage and recovery choices shape durable state and operational guarantees. Counterpoint: avoid extra infrastructure or separate ADRs for each retry detail; record one coherent persistence/recovery strategy.
+**ADR assessment:** the storage and deployment decision is recorded in accepted ADR-0003. It does not establish a completed recovery design. Keep routine schemas, locking, and retry details in implementation specifications; reassess the ADR boundary if recovery design changes the accepted deployment or operational guarantees.
 
 ## 4. Weekend scheduling and recovery
 
-**Status: open.** See [product design section 10](../01-grill-session/README.md#10-weekend-execution-and-failure-handling).
+**Status: open.** See [product design section 10](../01-grill-session/README.md).
 
 **Settled constraints:** Friday analysis at 9 a.m.; Saturday queue start at 9 a.m.; customer-configured timezone; approvals after Saturday's start wait until the next weekend; configurable Sunday-evening cutoff; bounded attempts; unfinished progress preserved; human decision to retry.
 
@@ -91,11 +97,11 @@ For implementation testing, the customer provides a development/test application
 
 **Review recommendation, not yet accepted:** preserve the Saturday cutoff, persist scheduling boundaries and eligible queue membership, distinguish recovery from retry, and bound active commands so the Sunday cutoff is enforceable. Validate downtime and cutoff scenarios. Do not reintroduce the scope-version or automated reapproval machinery deferred in point 1.
 
-**ADR assessment: worth considering.** A durable execution policy can deserve a record; numerical defaults and routine scheduling details belong in configuration/specifications. Recovery mechanisms may already be covered by point 3's eventual ADR.
+**ADR assessment: worth considering.** A durable execution policy can deserve a record; numerical defaults and routine scheduling details belong in configuration/specifications. Scheduling recovery overlaps with point 3's remaining recovery design; ADR-0003 settles only its storage and deployment foundation.
 
 ## 5. Feedback contract, reproducibility, and corrections
 
-**Status: open.** See [product design sections 3–5](../01-grill-session/README.md#3-uniform-feedback-schema).
+**Status: open.** See [product design sections 3–5](../01-grill-session/README.md).
 
 **Settled constraints:** PostgreSQL and MySQL expose a uniform read-only logical schema. Count only the current week's explicit feature requests from identified customers, deduplicated per customer/feature/week. Demand must be strictly greater than 25%; there is no minimum customer count.
 
@@ -111,7 +117,7 @@ For implementation testing, the customer provides a development/test application
 
 ## 6. Feature identity, grouping, and cooldown matching
 
-**Status: open.** See [grouping](../01-grill-session/README.md#5-customer-identity-deduplication-and-grouping) and [cooldown rules](../01-grill-session/README.md#8-ticket-eligibility-and-rejected-feature-cooldown).
+**Status: open.** See [grouping](../01-grill-session/README.md) and [cooldown rules](../01-grill-session/README.md).
 
 **Why it matters:** “feature” currently covers an underlying need, a requested behavior, a duplicate-work match, a rejection target, and an implementation scope. Those boundaries may differ.
 
@@ -127,7 +133,7 @@ For example, two of ten customers requesting email and two requesting SMS yield 
 
 ## 7. Ticket search boundaries and repository routing
 
-**Status: open.** See [product design sections 2 and 6](../01-grill-session/README.md#6-investigating-existing-tickets-and-code).
+**Status: open.** See [product design sections 2 and 6](../01-grill-session/README.md).
 
 **Why it matters:** strict label filters can miss duplicate work; broad searches can mix products. Code on a branch or a completed ticket does not establish that customers can use the behavior. Repository mappings may be ambiguous for work spanning multiple repositories.
 
@@ -143,7 +149,7 @@ For example, two of ten customers requesting email and two requesting SMS yield 
 
 ## 8. Repository support and successful PR delivery
 
-**Status: open.** See [bounded scope](../01-grill-session/README.md#7-bounded-implementation-scope) and [draft PR delivery](../01-grill-session/README.md#11-draft-pr-delivery).
+**Status: open.** See [bounded scope](../01-grill-session/README.md) and [draft PR delivery](../01-grill-session/README.md).
 
 **Settled constraints:** relevant checks pass, acceptance-criteria evidence is supplied, limitations are stated, and a human reviews/merges the draft PR. New code, tables, and migrations can qualify within bounded scope.
 
@@ -159,7 +165,7 @@ For example, two of ten customers requesting email and two requesting SMS yield 
 
 ## 9. Retention and copied artifacts
 
-**Status: open.** See [product design section 12](../01-grill-session/README.md#12-deployment-credentials-and-retention).
+**Status: open.** See [product design section 12](../01-grill-session/README.md).
 
 **Settled constraints:** customer-hosted operation; external AI providers with customer credentials; documented feedback/code disclosure; preserved evidence and execution records under a retention policy; original feedback records untouched.
 
@@ -175,9 +181,9 @@ For example, two of ten customers requesting email and two requesting SMS yield 
 
 ## 10. Model qualification and pilot evidence
 
-**Status: open.** See [model support](../01-grill-session/README.md#13-langgraph-and-model-independence) and [pilot success](../01-grill-session/README.md#14-pilot-success).
+**Status: open.** See [model support](../01-grill-session/README.md) and [pilot success](../01-grill-session/README.md).
 
-**Settled constraints:** LangGraph orchestration, LangChain model integrations, separate analysis/implementation model selection, tested external-provider integrations initially, extensibility for local models later, and two weekly cycles against one real product.
+**Settled constraints:** Rust workflow orchestration with Rig model integrations and agent capabilities, separate analysis/implementation model selection, tested external-provider integrations initially, extensibility for local models later, and two weekly cycles against one real product.
 
 Pilot success requires a genuine-feedback feature to be approved, implemented, and merged with less human effort than manual implementation. Ticket usefulness and implementation reliability are evaluated separately.
 
@@ -189,7 +195,7 @@ Pilot success requires a genuine-feedback feature to be approved, implemented, a
 
 **Review recommendation, not yet accepted:** evaluate analysis and implementation separately, including grouping errors, duplicate matching, bounded-scope coding, checks, recovery, and cost. Track active human time across investigation, approval, review, and repair, reporting setup separately. Assess whether the pilot product supplies enough genuine eligible feedback; do not change the threshold or introduce a minimum customer count implicitly.
 
-**ADR assessment: no new ADR needed** for model names or evaluation metrics alone. Reassess if a choice changes provider/data boundaries, runtime responsibilities, or foundational dependencies. Do not reopen the settled LangGraph choice merely to select a model.
+**ADR assessment: no new ADR needed** for model names or evaluation metrics alone. Reassess if a choice changes provider/data boundaries, runtime responsibilities, or foundational dependencies. Model selection should work within the agreed Rust/Rig architecture.
 
 ## Discussion dependencies and source checks
 
@@ -200,7 +206,10 @@ The initial review found no unambiguous contradiction among the settled product 
 The review consulted these primary sources; integration capabilities should be rechecked when their implementation is discussed:
 
 - [Linear webhooks](https://linear.app/developers/webhooks): issue/comment updates, actor information, authentication, and delivery behavior.
-- [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence): checkpointed graph state and application-defined state.
+- [Rig workflows](https://rig.rs/docs/concepts/chains): workflow composition in Rust for the accepted framework choice.
+- [Rig durable runs](https://rig.rs/docs/concepts/runs): agent-run serialization, pauses, and resumption; application storage and recovery still need explicit design.
+- [Rig providers and clients](https://rig.rs/docs/concepts/provider_clients): model-provider integrations.
+- [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence): a source consulted for the earlier LangGraph design, replaced by Rust/Rig.
 - [GitHub secure use reference](https://docs.github.com/en/actions/reference/security/secure-use): risks of executing untrusted code and handling credentials.
 - [Docker Engine security](https://docs.docker.com/engine/security/): execution isolation and configuration trade-offs considered before point 2 was settled.
 
