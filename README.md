@@ -14,7 +14,7 @@ The project is in the design stage. The repository currently contains the settle
 - Weekly analysis of explicit customer feature requests.
 - Linear ticket investigation, evidence collection, and approval checks.
 - Customer-hosted weekend implementation with human-reviewed draft PRs.
-- LangGraph orchestration and configurable models for analysis and implementation.
+- Rust & Rig orchestration and configurable models for analysis and implementation.
 
 ## Documentation
 
