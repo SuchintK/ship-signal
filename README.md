@@ -18,4 +18,5 @@ The project is in the design stage. The repository currently contains the settle
 
 ## Documentation
 
+- [Glossary](GLOSSARY.md)
 - [Documentation index](docs/README.md)
