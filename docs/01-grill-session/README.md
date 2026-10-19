@@ -26,13 +26,35 @@ The workflow is industry-independent. Initial compatibility is limited to suppor
 
 Both database integrations expose the same logical feedback schema through standardized, **read-only views** and database-specific connectors. Customers map their existing tables to these views; their underlying application schemas do not have to be uniform.
 
-The contract covers information such as message ID, customer ID, submission time, original feedback text, and source reference. Exact SQL definitions and field types remain to be specified.
+The accepted minimum logical field contract is:
+
+| Field | Logical type | Required? |
+| --- | --- | --- |
+| Product ID | Nonempty text | Yes |
+| Feedback source ID | Nonempty text | Yes |
+| Source message ID | Nonempty text | Yes |
+| Application customer ID | Nonempty text | No; null means unidentified |
+| Submission time | UTC-normalized instant | Yes |
+| Feedback text | Nonempty text | Yes |
+| Source reference | Text, such as a URL or locator | No |
+
+Treat identifiers as opaque text so numeric IDs, UUIDs, and existing string IDs fit the same contract. A null customer ID is valid unidentified feedback: preserve it but exclude it from demand percentages. Source references are optional because some sources have no link or locator. Exact SQL view definitions, database-specific types, and namespace configuration remain to be specified.
+
+Exclude invalid feedback rows and continue analysis with the valid rows. Report the excluded-row count and validation reasons alongside the result, making clear that demand is calculated from the valid subset. Invalid rows contribute to neither feature customer counts nor the denominator. Valid rows remain subject to the normal demand threshold and ticket eligibility rules; invalid-row exclusions do not block ticket creation. A null customer ID is valid unidentified feedback, not an invalid row. If an excluded historical row is later corrected, the explicit historical recomputation policy applies.
+
+Scope stable message identity by **product + feedback source + source message ID**. Scope customer identity by **product + application customer ID**, using the same application customer ID across channels. Identical message IDs from different sources remain separate evidence; messages from the same customer across those sources contribute to one distinct-customer count for the relevant feature/week. Identifiers must remain stable across reads rather than change with display names or row order.
+
+Each submission time must identify an unambiguous instant normalized to UTC. During setup, the customer explicitly defines how existing source timestamps map to UTC; Ship Signal must not infer an unspecified source timezone. Weekly cutoffs continue to follow the cycle's assigned customer-configured timezone. Exact database field types and conversion/validation mechanics remain to be specified.
 
 Document the contract in the README/getting-started guide and validate it during setup. The feedback connection must not modify the customer's original records.
 
 ## 4. Weekly analysis and demand threshold
 
+The weekly evidence and historical correction policy is recorded in [ADR-0005](../03-adr/0005-preserve-weekly-feedback-evidence-and-require-explicit-historical-corrections.md).
+
 Run analysis **Friday at 9 a.m. in a customer-configured timezone**, covering the interval from the previous Friday's cutoff to the current Friday's cutoff.
+
+Use a **start-inclusive, end-exclusive** submission interval: `[previous Friday 09:00, current Friday 09:00)`. Feedback submitted exactly at the current Friday's 09:00 cutoff belongs to the new week. Adjacent intervals share a boundary without counting the same submission in both weeks.
 
 If the service misses the scheduled analysis, run it automatically when service returns. Running late does not move the scheduled feedback interval or Saturday's approval deadline. See [weekend execution and failure handling](#10-weekend-execution-and-failure-handling) for scheduling and manual execution rules.
 
@@ -45,6 +67,18 @@ A feature qualifies for consideration only when demand is **strictly greater tha
 The denominator is feature-requesting customers, not all registered customers and not all feedback senders. Bug-only customers are excluded. A customer who submits both bugs and feature requests still counts once in the denominator.
 
 Only that week's feedback contributes to the calculation. The rejected-feature cooldown described below does not change this counting window.
+
+Save the feedback inputs and classification results used by each weekly analysis. Explain a completed result using those fixed copies rather than rereading live source records or rerunning the classifier. Later source edits or classification changes must not silently rewrite its evidence. Reusing saved classifications allows demand counts to be recalculated without assuming that another model invocation would produce identical classifications.
+
+Additional per-result provenance tracking is not required for MVP. The proposed package of provider/model identifiers, prompt text or versions, analysis settings, software/contract versions, and input-capture metadata was declined as unnecessary overhead. The agreed saved weekly inputs, classifications, and invalid-row exclusion diagnostics remain required; exact model-run reproduction is not an MVP guarantee.
+
+Historical corrections require an explicit request to recompute the affected week. Produce a corrected result distinguishable from the original and preserve the original subject to the retention policy. Late arrivals and identity, source-content, or classification corrections belong to the affected historical interval; they must not enter the current week's demand merely because the correction happened now. Source changes do not trigger automatic recomputation of completed weeks.
+
+For a requested historical rerun, reread the feedback database for the original weekly interval using its original cutoffs and assigned timezone. Analyze the current message text and customer identities, include late-arriving submissions within that interval, and omit messages no longer exposed by the source, including deleted messages. Save the corrected inputs and classifications separately from the original result. Requiring the person to supply individual corrections to the saved inputs was not selected. The corrected result reflects the source as read for that rerun; it does not recreate the source as it existed at the original analysis time.
+
+Request a historical rerun through the CLI and show the corrected report there when it completes. The report identifies the week and shows previous and corrected feature customer counts, denominator counts, percentages, invalid-row exclusion counts/reasons, and existing Linear ticket references where available. The rerun leaves existing Linear tickets unchanged; a person decides whether to update their evidence or demand numbers. Falling demand still does not invalidate an existing ticket. Exact command syntax and report formatting remain implementation details.
+
+These copies remain subject to the retention policy; this does not require indefinite preservation. Omitting a deleted source message from a corrected result does not define deletion of previously saved copies; retention and deletion responsibilities remain part of technical decision point 9. The accepted feedback policy and remaining implementation details are tracked under [technical decision point 5](../02-technical-decisions/README.md#5-feedback-contract-reproducibility-and-corrections).
 
 ## 5. Customer identity, deduplication, and grouping
 
@@ -200,7 +234,8 @@ The following have not been settled and must not be treated as approved choices:
 
 - Concrete initial AI provider/model names and their task-specific capability checks.
 - Exact Linear label-filter rules: strict search constraints versus contextual relevance.
-- Exact SQL view definitions, field types, and setup validation details for PostgreSQL and MySQL.
+- Exact SQL view definitions, database-specific types, setup validation details, and concrete row-validation rules/diagnostics for PostgreSQL and MySQL. Invalid rows are excluded and reported while analysis continues.
+- Feedback namespace configuration and database-specific timestamp conversion/validation mechanics; consistent input capture and restart behavior for saved weekly inputs/classifications; and historical recomputation mechanics, including exact CLI syntax/report formatting and storage of corrected results. Historical reruns read current source data for the original interval, report through the CLI, and leave existing Linear tickets unchanged. Contract versioning/compatibility policy has not been selected.
 - The precise boundary used to match the "same or similar" feature for cooldown enforcement.
 - Exact retention durations and numerical defaults for attempt/time/cost budgets, the Sunday cutoff, and the grace period; time/cost accounting and command shutdown mechanisms.
 - Exact Linear action and CLI command syntax for retries/manual execution, including deadline input and verification of CLI actors against configured approvers.

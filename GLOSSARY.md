@@ -84,6 +84,9 @@ A feedback record that becomes available after the analysis for its submission p
 **Historical correction**:
 A later change to information about past feedback, such as linking an earlier unidentified message to a customer.
 
+**Historical rerun**:
+A person-requested repeat of analysis for an earlier weekly interval using feedback currently available for that interval. Its corrected result is distinct from the original analysis.
+
 **Classification**:
 An assignment of meaning or category to feedback, such as feature request, bug report, or membership in a particular request group.
 

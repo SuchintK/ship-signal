@@ -8,3 +8,4 @@ ADRs preserve the rationale and trade-offs behind consequential architecture dec
 | 0002 | Defer versioned approval for MVP | Accepted | 2026-10-14 | [ADR-0002](0002-defer-versioned-approval-for-mvp.md) |
 | 0003 | Use SQLite for single-host MVP application state | Accepted | 2026-10-17 | [ADR-0003](0003-use-sqlite-for-single-host-mvp-state.md) |
 | 0004 | Distinguish scheduled execution, recovery, retries, and manual execution | Accepted | 2026-10-19 | [ADR-0004](0004-distinguish-scheduled-recovery-retries-and-manual-execution.md) |
+| 0005 | Preserve weekly feedback evidence and require explicit historical corrections | Accepted | 2026-10-20 | [ADR-0005](0005-preserve-weekly-feedback-evidence-and-require-explicit-historical-corrections.md) |
