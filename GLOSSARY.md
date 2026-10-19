@@ -266,6 +266,9 @@ A retry is another attempt at the same intended action after an earlier attempt 
 **Bounded attempts**:
 Attempts subject to explicit limits, such as a maximum count, elapsed time, or cost.
 
+**Implementation retry**:
+A human-authorized new attempt at failed or unfinished implementation work, with a fresh bounded budget. It is distinct from recovering an interrupted execution under its existing budget and from retrying an individual external API operation.
+
 **External write / side effect**:
 A change outside Ship Signal's application database, such as creating a Linear ticket or opening a GitHub PR. A side effect more broadly means a change made by an operation beyond returning a result.
 
@@ -294,10 +297,22 @@ Checking local records against external reality to resolve an uncertain or confl
 The local time reference chosen by the customer team for analysis and execution schedules.
 
 **Approval cutoff**:
-The time boundary determining which approved tickets are eligible for a particular execution window.
+The time boundary determining which approved tickets are eligible for automatic weekend execution, based on when approval actually occurred.
 
 **Execution window / Sunday cutoff**:
-The execution window is the permitted period for implementation; the Sunday cutoff is its configured closing boundary.
+The scheduled execution window is the regular period for automatic implementation. The Sunday cutoff ends admission of new implementations through the automatic queue; ongoing implementations can continue within a bounded grace period.
+
+**Grace period**:
+A bounded extension after Sunday's cutoff for implementations already underway. Starting an untouched ticket after the cutoff is manual execution, not use of the grace period.
+
+**Manual execution**:
+An explicit human request to run an approved ticket outside the scheduled execution window, with an end deadline. Approval alone is not a request to start immediately.
+
+**Execution budget**:
+The bounded allocation of attempts, time, and cost for implementation work. Automatic recovery preserves consumption of the existing budget; a human-authorized implementation retry receives a fresh one.
+
+**Weekly cycle**:
+The scheduled Friday analysis and its following weekend execution window, with their assigned timezone and scheduling boundaries.
 
 **Queue**:
 A collection of work waiting to be processed, together with whatever ordering policy applies.
@@ -306,7 +321,7 @@ A collection of work waiting to be processed, together with whatever ordering po
 The set of tickets selected as eligible for one weekend's execution window.
 
 **Catch-up**:
-Handling a scheduled event that was missed while the service was unavailable. Whether and when to run missed work is a scheduling policy question.
+Running scheduled work late after service unavailability, while preserving the original scheduling boundaries and eligibility rules.
 
 **Daylight-saving change**:
 A seasonal change to a timezone's clock offset that can shift how a local scheduled time maps to UTC.

@@ -4,7 +4,19 @@ This document preserves the ten findings from the technical review and the decis
 
 The repository contains design documentation and ADRs; implementation has not started. The [product design](../01-grill-session/README.md) defines the agreed behavior. [Accepted ADRs](../03-adr/README.md) preserve architectural decisions and their rationale. Recommendations below are proposals unless explicitly marked as accepted.
 
-Points 1 and 2 have been discussed and settled for MVP. Point 3 is partially settled: Rust, Rig, SQLite, and single-host deployment are accepted; detailed concurrency and recovery mechanisms remain open. Points 4–10 remain open. Deferred features must not be treated as MVP requirements. No specific future implementation of those features has been approved.
+Points 1 and 2 have been discussed and settled for MVP. Point 3 is partially settled: Rust, Rig, SQLite, and single-host deployment are accepted; detailed concurrency and recovery mechanisms remain open. Point 4's scheduling policy is settled; numerical defaults and implementation details remain open. Points 5–10 remain open. Deferred features must not be treated as MVP requirements. No specific future implementation of those features has been approved.
+
+## How to discuss a point
+
+When the user asks to work through a point, guide the discussion one unresolved decision at a time:
+
+1. Identify the existing requirements and distinguish them from new proposals.
+2. Explain the current question with a concrete example, present its options, and recommend an answer with its trade-offs.
+3. Wait for the user's decision before moving to the next question. Track what is settled and what remains open.
+4. Once the point is settled, update the affected product design and technical-decision documentation, and assess whether the agreed decision needs an ADR.
+5. Complete the ADR follow-through: if an ADR is recommended and creation is not already authorized, explain why and ask whether to create it before ending the discussion. When authorized, create the record and update its index and related links. If the user declines or defers, record that outcome and leave creation pending or declined until the user revisits it; honor existing authorization and deferrals rather than asking again.
+
+The existing “Questions to resolve,” “Alternatives,” and “Review recommendation” sections are review notes, not a one-to-one decision guide. Reconcile them into the question-by-question discussion; the user should not need to map them together. Keep recommendations provisional until the user accepts them.
 
 ## Decision index
 
@@ -13,7 +25,7 @@ Points 1 and 2 have been discussed and settled for MVP. Point 3 is partially set
 | [1](#1-approval-provenance-and-scope-versioning) | Approval provenance and scope versioning | Advanced controls deferred; basic approval retained | Accepted [ADR-0002](../03-adr/0002-defer-versioned-approval-for-mvp.md) |
 | [2](#2-execution-environment-and-credential-access) | Execution environment and credential access | Isolation customer-managed; shared-database handling deferred | Accepted [ADR-0001](../03-adr/0001-leave-execution-isolation-to-customers-for-mvp.md) |
 | [3](#3-durable-state-concurrency-and-external-write-recovery) | Durable state, concurrency, and external-write recovery | Rust/Rig and SQLite single-host deployment accepted; recovery details open | Storage/deployment: accepted [ADR-0003](../03-adr/0003-use-sqlite-for-single-host-mvp-state.md) |
-| [4](#4-weekend-scheduling-and-recovery) | Weekend scheduling and recovery | Open | ADR worth considering |
+| [4](#4-weekend-scheduling-and-recovery) | Weekend scheduling and recovery | Scheduling policy settled; defaults and implementation details open | Accepted [ADR-0004](../03-adr/0004-distinguish-scheduled-recovery-retries-and-manual-execution.md) |
 | [5](#5-feedback-contract-reproducibility-and-corrections) | Feedback contract, reproducibility, and corrections | Open | ADR recommended |
 | [6](#6-feature-identity-grouping-and-cooldown-matching) | Feature identity, grouping, and cooldown matching | Open | ADR worth considering |
 | [7](#7-ticket-search-boundaries-and-repository-routing) | Ticket search boundaries and repository routing | Open | ADR worth considering |
@@ -85,19 +97,32 @@ For implementation testing, the customer provides a development/test application
 
 ## 4. Weekend scheduling and recovery
 
-**Status: open.** See [product design section 10](../01-grill-session/README.md).
+**Status: scheduling policy settled for MVP; defaults and implementation details remain open.** See [product design section 4](../01-grill-session/README.md) and [section 10](../01-grill-session/README.md) for the agreed behavior.
 
-**Settled constraints:** Friday analysis at 9 a.m.; Saturday queue start at 9 a.m.; customer-configured timezone; approvals after Saturday's start wait until the next weekend; configurable Sunday-evening cutoff; bounded attempts; unfinished progress preserved; human decision to retry.
+**Original concern:** downtime, delayed approval notifications, and resumed work could bypass the intended execution window. Pausing a workflow does not stop an active command. The original Saturday approval deadline also needed a clear relationship to explicit manual execution.
 
-**Why it matters:** downtime, delayed approval notifications, and resumed work can otherwise bypass the intended execution window. A workflow pause alone does not define how an active command stops at the cutoff.
+**Accepted decisions and trade-offs:**
 
-**Questions to resolve:** missed schedules and catch-up; daylight-saving/timezone changes; queue ordering; eligible work when a previous PR remains unmerged; recovery of unchanged work versus a human-requested retry; manual reapproval after the cutoff; and attempt/time/cost limits.
+| Decision | Agreed answer | Trade-off |
+| --- | --- | --- |
+| Missed schedules | Automatically catch up Friday analysis; start Saturday's queue late only while the weekend window is still open. Preserve the original schedule boundaries. | Outages need less human intervention, but late work has less time before the existing deadlines. |
+| Delayed approval notifications | Use verified actual approval time for Saturday eligibility. | Timely approvals remain eligible despite delivery delays; eligibility must be verifiable after the deadline. |
+| Queue ordering and untouched work | Linear priority first, then oldest approval within each repository. Untouched work can wait for next weekend or be manually started. | Reflects team priorities without a separate manual queue; lower-priority work may wait across weekends. |
+| Earlier unmerged PR | Allow another implementation on a separate branch, retaining one active implementation per repository. | Review does not block throughput, but overlap and branch conflicts still need handling. |
+| Interrupted implementation | Automatically resume safely within the same permitted weekend window, preserving consumed limits. | Crashes need less human intervention; recovery must establish the actual execution state before continuing. |
+| Human-authorized implementation retry | Allow another attempt during the current weekend, with a fresh bounded budget and the existing deadline. | A human can unblock work promptly; repeated authorizations can increase total spending. |
+| Sunday cutoff | Stop automatic admission of new implementations; allow ongoing implementations a bounded grace period, then stop and preserve progress. | Existing work can finish, but execution may extend beyond the nominal cutoff. |
+| Manual execution | Allow any approved ticket to run outside the schedule, including approvals after Saturday's deadline, with an explicit end deadline. | Provides deliberate flexibility while requiring a separate human execution request. |
+| Human interaction | Support both configured Linear actions and CLI commands for retries/manual execution, with the same configured-approver checks. | Both workflows are available; actor verification and action semantics must stay consistent. |
+| Timezone changes | Apply changes next weekly cycle; retain the current cycle's times and follow the assigned timezone's daylight-saving rules. | Current deadlines stay predictable; configuration changes take effect later. |
 
-**Alternatives:** a fixed weekend cohort; controlled admission during the window; or explicit exception actions. Any exception to the settled Saturday approval cutoff would require an agreed requirement change.
+**Approval boundary:** Saturday's deadline governs automatic weekend execution. Explicit manual execution is the accepted exception; it does not waive approval or permit expanded scope. Scope snapshots, versioned approval, and automated scope-change/reapproval machinery remain deferred under point 1.
 
-**Review recommendation, not yet accepted:** preserve the Saturday cutoff, persist scheduling boundaries and eligible queue membership, distinguish recovery from retry, and bound active commands so the Sunday cutoff is enforceable. Validate downtime and cutoff scenarios. Do not reintroduce the scope-version or automated reapproval machinery deferred in point 1.
+**Alternatives not selected:** skip missed schedules or require human intervention for every interruption; impose a firm Sunday deadline without grace; restrict human-authorized retries to the next weekend; block all new work behind an unmerged PR; or offer execution requests only through Linear or only through the CLI. These alternatives trade flexibility and throughput for simpler coordination or stricter timing. An unrestricted extension of the automatic queue was not selected: untouched tickets after the cutoff require manual execution with an explicit deadline.
 
-**ADR assessment: worth considering.** A durable execution policy can deserve a record; numerical defaults and routine scheduling details belong in configuration/specifications. Scheduling recovery overlaps with point 3's remaining recovery design; ADR-0003 settles only its storage and deployment foundation.
+**Remaining implementation work:** numerical attempt/time/cost limits, Sunday cutoff and grace defaults; budget accounting; Linear/CLI interaction syntax and actor verification; durable schedule/eligibility records; command shutdown and safe resumption mechanisms; and handling multiple missed analysis cycles after prolonged downtime. The latter must preserve weekly feedback intervals and must not silently move historical feedback into the current week. No defaults or concrete recovery algorithms have been selected. Validate delayed notifications, restart/budget preservation, cutoff/grace expiry, manual deadlines, duplicate execution requests, and timezone transitions before implementation is considered complete.
+
+**ADR assessment: recorded in accepted [ADR-0004](../03-adr/0004-distinguish-scheduled-recovery-retries-and-manual-execution.md).** The record preserves the enduring distinction between scheduled execution, recovery under the existing budget, human-authorized retries with fresh budgets, and manual execution with explicit deadlines. Numerical defaults, interface syntax, and concrete recovery mechanisms remain specification work. [ADR-0003](../03-adr/0003-use-sqlite-for-single-host-mvp-state.md) establishes the storage/deployment foundation; ADR-0004 adds the execution policy without replacing an earlier accepted decision.
 
 ## 5. Feedback contract, reproducibility, and corrections
 

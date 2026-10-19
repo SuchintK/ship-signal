@@ -34,6 +34,8 @@ Document the contract in the README/getting-started guide and validate it during
 
 Run analysis **Friday at 9 a.m. in a customer-configured timezone**, covering the interval from the previous Friday's cutoff to the current Friday's cutoff.
 
+If the service misses the scheduled analysis, run it automatically when service returns. Running late does not move the scheduled feedback interval or Saturday's approval deadline. See [weekend execution and failure handling](#10-weekend-execution-and-failure-handling) for scheduling and manual execution rules.
+
 Calculate:
 
 **Demand percentage = distinct customers requesting a particular feature ÷ distinct customers requesting any feature that week × 100.**
@@ -113,15 +115,37 @@ The rationale and trade-offs are recorded in [ADR-0002](../03-adr/0002-defer-ver
 
 ## 10. Weekend execution and failure handling
 
-- Start the approved queue **Saturday at 9 a.m. in the configured timezone**.
-- Tickets approved after that start wait until the following weekend.
-- Run one implementation at a time per repository. Different repositories may run independently.
-- Use bounded attempts within the approved scope.
-- Stop cleanly at a configurable **Sunday-evening cutoff**.
-- Preserve unfinished progress and report obstacles or unfinished work. A person decides whether to retry.
-- Expanded scope requires renewed human approval; the team coordinates requirement changes manually in MVP.
+The execution policy and its trade-offs are recorded in [ADR-0004](../03-adr/0004-distinguish-scheduled-recovery-retries-and-manual-execution.md).
 
-Linear approval records authorization; it does not immediately start coding on Friday. Falling demand does not automatically cancel already-approved work.
+### Schedule and queue
+
+- Start the approved queue **Saturday at 9 a.m. in the configured timezone**. If the service returns late, automatically start eligible work while still inside the scheduled weekend window; keep the original approval deadline and Sunday cutoff.
+- Determine eligibility using the **verified actual approval time**, not when its notification arrives. Tickets approved after Saturday's deadline wait until the following weekend for automatic execution; explicit manual execution is the exception below.
+- Within each repository, order eligible tickets by **Linear priority, then oldest approval**.
+- Run **one active implementation at a time per repository**. Different repositories may run independently. An earlier unmerged PR does not block another implementation; use a separate branch for the new work.
+- For untouched tickets, the customer can leave them for the next weekend's queue or explicitly request manual execution. They do not need another approval merely because implementation never started.
+- Keep each weekly cycle's scheduled times in its assigned timezone, including that timezone's daylight-saving rules. A configured timezone change takes effect **next weekly cycle**, leaving the current cycle's boundaries unchanged.
+
+### Recovery, retries, and limits
+
+- Automatically resume interrupted implementation during the same permitted weekend window after establishing that it is safe to continue. A crash or service restart **does not reset consumed attempt, time, or cost limits**.
+- Preserve unfinished progress and report obstacles or unfinished work. Work stopped because it failed, exhausted its limits, or remained unfinished when its permitted window ended requires a **human-authorized implementation retry**.
+- A person may authorize that retry **during the current weekend**. Each human-authorized retry receives a **fresh bounded attempt/time/cost budget**, while retaining the applicable execution deadline. Automatic recovery is continuation of the existing budget, not a new retry authorization.
+
+### Sunday cutoff and grace period
+
+- At the configurable **Sunday-evening cutoff**, stop starting new implementations through the automatic queue.
+- Implementations already underway may continue within a **bounded, configurable grace period**. This extension is for ongoing implementations; starting untouched tickets after the cutoff requires explicit manual execution.
+- When the grace period expires, stop remaining automatically scheduled execution, preserve progress, and report unfinished work. The grace period does not reset attempt/time/cost limits. Explicit manual execution follows its own deadline.
+
+### Explicit manual execution
+
+- A person may explicitly start **any approved ticket outside the scheduled weekend window**, including a ticket approved after Saturday's deadline or an untouched ticket remaining in the queue.
+- Every manual execution requires an **explicit end deadline** and remains subject to bounded attempt/time/cost limits and one active implementation per repository. Approval alone does not request a manual run.
+- Support **both configured Linear actions and CLI commands** for implementation retries and manual execution. Apply the same configured-approver authorization checks through both interfaces. Exact interaction syntax and CLI identity verification remain to be specified.
+- Manual execution overrides scheduling, not approval or scope. Expanded scope still requires renewed human approval; the team coordinates requirement changes manually in MVP.
+
+Linear approval records authorization; it does not immediately start coding. Falling demand does not automatically cancel already-approved work. Persist the scheduling boundaries, eligibility, progress, and budget consumption needed to preserve these rules across restarts; the concrete recovery mechanisms remain part of point 3's open implementation design.
 
 ## 11. Draft PR delivery
 
@@ -178,7 +202,9 @@ The following have not been settled and must not be treated as approved choices:
 - Exact Linear label-filter rules: strict search constraints versus contextual relevance.
 - Exact SQL view definitions, field types, and setup validation details for PostgreSQL and MySQL.
 - The precise boundary used to match the "same or similar" feature for cooldown enforcement.
-- Exact retention durations and numerical defaults for bounded attempts and the Sunday cutoff.
+- Exact retention durations and numerical defaults for attempt/time/cost budgets, the Sunday cutoff, and the grace period; time/cost accounting and command shutdown mechanisms.
+- Exact Linear action and CLI command syntax for retries/manual execution, including deadline input and verification of CLI actors against configured approvers.
+- Handling of multiple missed analysis cycles after prolonged downtime, without changing the agreed weekly feedback intervals or counting historical submissions as current-week feedback.
 - Application-state schemas and authority, repository ownership and subprocess recovery, external-operation identity and reconciliation, and SQLite configuration and backup procedures within the accepted single-host deployment.
 - Workflow checkpoint boundaries and Rig agent-run persistence/resumption within the Rust execution service.
 
