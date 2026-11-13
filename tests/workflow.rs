@@ -150,3 +150,211 @@ fn unidentified_and_bug_only_feedback_cannot_qualify() -> anyhow::Result<()> {
     assert!(!report.products[0].needs[0].qualifies);
     Ok(())
 }
+
+#[test]
+fn confirmed_need_identity_connects_labels_across_reports_without_changing_old_evidence()
+-> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("state.sqlite");
+    let mut workflow = Workflow::open(&path)?;
+    let mut source = Source(vec![feedback("first", Some("alice"))]);
+    let classify = |name: &'static str| {
+        move |_: &[Feedback]| {
+            Ok(vec![Classification {
+                message_index: 0,
+                needs: vec![Need {
+                    name: name.into(),
+                    variant: Some("CSV".into()),
+                }],
+            }])
+        }
+    };
+    let old = workflow.analyze(
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        classify("CSV export"),
+    )?;
+    assert_eq!(old.products[0].needs[0].identity, None);
+    workflow.assign_need_identity("shop", "CSV export", "export-data")?;
+    workflow.assign_need_identity("shop", "download data as CSV", "export-data")?;
+    drop(workflow);
+    let mut workflow = Workflow::open(&path)?;
+    let first = workflow.analyze(
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        classify("CSV export"),
+    )?;
+    let second = workflow.analyze(
+        &mut source,
+        "2026-11-13T00:00:00Z".parse()?,
+        "2026-11-20T00:00:00Z".parse()?,
+        classify("download data as CSV"),
+    )?;
+    assert_eq!(
+        first.products[0].needs[0].identity.as_deref(),
+        Some("export-data")
+    );
+    assert_eq!(
+        second.products[0].needs[0].identity.as_deref(),
+        Some("export-data")
+    );
+    assert_eq!(workflow.report(old.id)?, old);
+    assert!(
+        workflow
+            .assign_need_identity("shop", "CSV export", "different-need")
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn confirmed_aliases_combine_demand_only_within_the_same_product() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut workflow = Workflow::open(dir.path().join("state.sqlite"))?;
+    workflow.assign_need_identity("shop", "CSV export", "export-data")?;
+    workflow.assign_need_identity("shop", "download data as CSV", "export-data")?;
+    let mut another_product = feedback("third", Some("alice"));
+    another_product.product_id = "other-shop".into();
+    let mut source = Source(vec![
+        feedback("first", Some("alice")),
+        feedback("second", Some("bob")),
+        another_product,
+    ]);
+    let report = workflow.analyze(
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| {
+            Ok(vec![
+                Classification {
+                    message_index: 0,
+                    needs: vec![Need {
+                        name: "CSV export".into(),
+                        variant: Some("CSV".into()),
+                    }],
+                },
+                Classification {
+                    message_index: 1,
+                    needs: vec![Need {
+                        name: "download data as CSV".into(),
+                        variant: Some("CSV".into()),
+                    }],
+                },
+                Classification {
+                    message_index: 2,
+                    needs: vec![Need {
+                        name: "CSV export".into(),
+                        variant: None,
+                    }],
+                },
+            ])
+        },
+    )?;
+    let shop = report
+        .products
+        .iter()
+        .find(|p| p.product_id == "shop")
+        .unwrap();
+    assert_eq!(shop.needs.len(), 1);
+    assert_eq!(shop.needs[0].identity.as_deref(), Some("export-data"));
+    assert_eq!(shop.needs[0].customer_count, 2);
+    assert_eq!(shop.needs[0].message_indices, vec![0, 1]);
+    let other = report
+        .products
+        .iter()
+        .find(|p| p.product_id == "other-shop")
+        .unwrap();
+    assert_eq!(other.needs[0].identity, None);
+    Ok(())
+}
+
+#[test]
+fn explicit_identity_correction_changes_future_analyses_without_rewriting_history()
+-> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut workflow = Workflow::open(dir.path().join("state.sqlite"))?;
+    let mut source = Source(vec![feedback("first", Some("alice"))]);
+    let classify = |_: &[Feedback]| {
+        Ok(vec![Classification {
+            message_index: 0,
+            needs: vec![Need {
+                name: "CSV export".into(),
+                variant: None,
+            }],
+        }])
+    };
+    workflow.assign_need_identity("shop", "CSV export", "wrong")?;
+    let before = workflow.analyze(
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        classify,
+    )?;
+    assert!(
+        workflow
+            .correct_need_identity("shop", "CSV export", "outdated", "right")
+            .is_err()
+    );
+    workflow.correct_need_identity("shop", "CSV export", "wrong", "right")?;
+    let after = workflow.analyze(
+        &mut source,
+        "2026-11-13T00:00:00Z".parse()?,
+        "2026-11-20T00:00:00Z".parse()?,
+        classify,
+    )?;
+    assert_eq!(
+        after.products[0].needs[0].identity.as_deref(),
+        Some("right")
+    );
+    assert_eq!(workflow.report(before.id)?, before);
+    Ok(())
+}
+
+#[test]
+fn reviewed_report_recalculates_saved_classifications_after_mapping_without_rewriting_original()
+-> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut workflow = Workflow::open(dir.path().join("state.sqlite"))?;
+    let mut source = Source(vec![
+        feedback("first", Some("alice")),
+        feedback("second", Some("bob")),
+    ]);
+    let original = workflow.analyze(
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| {
+            Ok(vec![
+                Classification {
+                    message_index: 0,
+                    needs: vec![Need {
+                        name: "CSV export".into(),
+                        variant: Some("CSV".into()),
+                    }],
+                },
+                Classification {
+                    message_index: 1,
+                    needs: vec![Need {
+                        name: "download CSV".into(),
+                        variant: Some("CSV".into()),
+                    }],
+                },
+            ])
+        },
+    )?;
+    assert!(original.products[0].needs_identity_review);
+    workflow.assign_need_identity("shop", "CSV export", "export")?;
+    workflow.assign_need_identity("shop", "download CSV", "export")?;
+    source.0.clear();
+    let reviewed = workflow.review_report(original.id)?;
+    assert_ne!(original.id, reviewed.id);
+    assert!(!reviewed.products[0].needs_identity_review);
+    assert_eq!(reviewed.products[0].needs.len(), 1);
+    assert_eq!(reviewed.products[0].needs[0].customer_count, 2);
+    assert_eq!(reviewed.input, original.input);
+    assert_eq!(reviewed.classifications, original.classifications);
+    assert_eq!(workflow.report(original.id)?, original);
+    Ok(())
+}

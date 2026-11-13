@@ -43,8 +43,16 @@ pub trait FeedbackSource {
     fn read(&mut self, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<AnalysisInput>;
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NeedIdentityAlias {
+    pub product_id: String,
+    pub label: String,
+    pub identity: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NeedReport {
     pub name: String,
+    #[serde(default)]
+    pub identity: Option<String>,
     pub customer_count: usize,
     pub percentage: f64,
     pub qualifies: bool,
@@ -55,11 +63,19 @@ pub struct NeedReport {
 pub struct ProductReport {
     pub product_id: String,
     pub denominator: usize,
+    #[serde(default = "review_required_for_legacy_report")]
+    pub needs_identity_review: bool,
     pub needs: Vec<NeedReport>,
 }
+fn review_required_for_legacy_report() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Report {
     pub id: i64,
+    #[serde(default)]
+    pub reviewed_from: Option<i64>,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
     pub input: AnalysisInput,
@@ -67,13 +83,20 @@ pub struct Report {
     pub products: Vec<ProductReport>,
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum GroupKey {
+    Mapped(String),
+    Unresolved(String),
+}
+
 #[derive(Default)]
 struct ProductDemand {
     customers: BTreeSet<String>,
-    needs: BTreeMap<String, NeedDemand>,
+    needs: BTreeMap<GroupKey, NeedDemand>,
 }
 #[derive(Default)]
 struct NeedDemand {
+    labels: BTreeSet<String>,
     customers: BTreeSet<String>,
     variants: BTreeSet<String>,
     messages: BTreeSet<usize>,
@@ -85,8 +108,66 @@ pub struct Workflow {
 impl Workflow {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path)?;
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS analysis_reports (id INTEGER PRIMARY KEY, report TEXT NOT NULL);")?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS analysis_reports (id INTEGER PRIMARY KEY, report TEXT NOT NULL); CREATE TABLE IF NOT EXISTS need_identity_aliases (product_id TEXT NOT NULL, label TEXT NOT NULL, identity TEXT NOT NULL, PRIMARY KEY (product_id, label));")?;
         Ok(Self { connection })
+    }
+    /// Assign a product-scoped identity to a label after human review.
+    /// Conflicting assignments fail; corrections require the explicit guarded operation.
+    pub fn assign_need_identity(
+        &self,
+        product_id: &str,
+        label: &str,
+        identity: &str,
+    ) -> Result<()> {
+        ensure!(
+            !product_id.trim().is_empty()
+                && !label.trim().is_empty()
+                && !identity.trim().is_empty(),
+            "product, label, and identity must be nonempty"
+        );
+        self.connection.execute("INSERT INTO need_identity_aliases (product_id, label, identity) VALUES (?1, ?2, ?3) ON CONFLICT(product_id, label) DO NOTHING", params![product_id, label, identity])?;
+        let stored: String = self.connection.query_row(
+            "SELECT identity FROM need_identity_aliases WHERE product_id = ?1 AND label = ?2",
+            params![product_id, label],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            stored == identity,
+            "label already has a different identity; review the existing mapping"
+        );
+        Ok(())
+    }
+    pub fn correct_need_identity(
+        &self,
+        product_id: &str,
+        label: &str,
+        previous: &str,
+        identity: &str,
+    ) -> Result<()> {
+        ensure!(
+            !product_id.trim().is_empty()
+                && !label.trim().is_empty()
+                && !previous.trim().is_empty()
+                && !identity.trim().is_empty(),
+            "product, label, previous identity, and identity must be nonempty"
+        );
+        let count = self.connection.execute("UPDATE need_identity_aliases SET identity = ?1 WHERE product_id = ?2 AND label = ?3 AND identity = ?4", params![identity, product_id, label, previous])?;
+        ensure!(
+            count == 1,
+            "mapping not found or previous identity changed; list mappings and review before retrying"
+        );
+        Ok(())
+    }
+    pub fn need_identity_aliases(&self) -> Result<Vec<NeedIdentityAlias>> {
+        let mut statement = self.connection.prepare("SELECT product_id, label, identity FROM need_identity_aliases ORDER BY product_id, label")?;
+        let rows = statement.query_map([], |row| {
+            Ok(NeedIdentityAlias {
+                product_id: row.get(0)?,
+                label: row.get(1)?,
+                identity: row.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
     pub fn analyze(
         &mut self,
@@ -97,7 +178,28 @@ impl Workflow {
     ) -> Result<Report> {
         ensure!(start < end, "interval start must precede end");
         let input = source.read(start, end)?;
-        let mut classifications = classify(&input.feedback)?;
+        let classifications = classify(&input.feedback)?;
+        self.complete_analysis(start, end, input, classifications, None)
+    }
+    /// Recalculate grouping from saved evidence with the current reviewed mappings.
+    pub fn review_report(&mut self, id: i64) -> Result<Report> {
+        let previous = self.report(id)?;
+        self.complete_analysis(
+            previous.start,
+            previous.end,
+            previous.input,
+            previous.classifications,
+            Some(id),
+        )
+    }
+    fn complete_analysis(
+        &mut self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        input: AnalysisInput,
+        mut classifications: Vec<Classification>,
+        reviewed_from: Option<i64>,
+    ) -> Result<Report> {
         classifications.sort_by_key(|c| c.message_index);
         ensure!(
             classifications.len() == input.feedback.len(),
@@ -119,6 +221,14 @@ impl Workflow {
                 );
             }
         }
+        let aliases: BTreeMap<(String, String), String> = {
+            let mut statement = self
+                .connection
+                .prepare("SELECT product_id, label, identity FROM need_identity_aliases")?;
+            let rows =
+                statement.query_map([], |row| Ok(((row.get(0)?, row.get(1)?), row.get(2)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
         let mut products: BTreeMap<String, ProductDemand> = BTreeMap::new();
         for (row, classification) in input.feedback.iter().zip(&classifications) {
             let product = products.entry(row.product_id.clone()).or_default();
@@ -128,7 +238,13 @@ impl Workflow {
                 }
             }
             for need in &classification.needs {
-                let group = product.needs.entry(need.name.clone()).or_default();
+                let identity = aliases.get(&(row.product_id.clone(), need.name.clone()));
+                let key = match identity {
+                    Some(identity) => GroupKey::Mapped(identity.clone()),
+                    None => GroupKey::Unresolved(need.name.clone()),
+                };
+                let group = product.needs.entry(key).or_default();
+                group.labels.insert(need.name.clone());
                 if let Some(customer) = &row.customer_id {
                     group.customers.insert(customer.clone());
                 }
@@ -142,13 +258,22 @@ impl Workflow {
             .into_iter()
             .map(|(product_id, product)| {
                 let denominator = product.customers.len();
+                let needs_identity_review = product
+                    .needs
+                    .keys()
+                    .any(|key| matches!(key, GroupKey::Unresolved(_)));
                 let needs = product
                     .needs
                     .into_iter()
-                    .map(|(name, need)| {
+                    .map(|(key, need)| {
+                        let name = need.labels.iter().next().cloned().unwrap_or_default();
                         let count = need.customers.len();
                         NeedReport {
                             name,
+                            identity: match key {
+                                GroupKey::Mapped(identity) => Some(identity),
+                                GroupKey::Unresolved(_) => None,
+                            },
                             customer_count: count,
                             percentage: if denominator == 0 {
                                 0.0
@@ -164,12 +289,14 @@ impl Workflow {
                 ProductReport {
                     product_id,
                     denominator,
+                    needs_identity_review,
                     needs,
                 }
             })
             .collect();
         let mut report = Report {
             id: 0,
+            reviewed_from,
             start,
             end,
             input,

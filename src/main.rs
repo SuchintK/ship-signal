@@ -45,6 +45,31 @@ enum Command {
         #[arg(long, env = "SHIP_SIGNAL_ANALYSIS_MODEL")]
         model: String,
     },
+    /// Assign a reviewed label to a stable, product-scoped need identity.
+    MapNeed {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        product: String,
+        #[arg(long)]
+        label: String,
+        #[arg(long)]
+        identity: String,
+        /// Required when correcting an existing mapping.
+        #[arg(long)]
+        previous_identity: Option<String>,
+    },
+    /// Recalculate a separate report from saved evidence and current mappings.
+    ReviewReport {
+        #[arg(long)]
+        state: PathBuf,
+        id: i64,
+    },
+    /// List reviewed need identity mappings.
+    NeedIdentities {
+        #[arg(long)]
+        state: PathBuf,
+    },
     /// Read a saved report without connecting to the feedback database or classifier.
     Report {
         #[arg(long)]
@@ -92,6 +117,30 @@ fn main() -> Result<()> {
             })?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        Command::MapNeed {
+            state,
+            product,
+            label,
+            identity,
+            previous_identity,
+        } => {
+            let workflow = Workflow::open(state)?;
+            match previous_identity {
+                Some(previous) => {
+                    workflow.correct_need_identity(&product, &label, &previous, &identity)?
+                }
+                None => workflow.assign_need_identity(&product, &label, &identity)?,
+            }
+            println!("Need identity mapping saved for future analyses.");
+        }
+        Command::ReviewReport { state, id } => println!(
+            "{}",
+            serde_json::to_string_pretty(&Workflow::open(state)?.review_report(id)?)?
+        ),
+        Command::NeedIdentities { state } => println!(
+            "{}",
+            serde_json::to_string_pretty(&Workflow::open(state)?.need_identity_aliases()?)?
+        ),
         Command::Report { state, id } => println!(
             "{}",
             serde_json::to_string_pretty(&Workflow::open(state)?.report(id)?)?

@@ -50,7 +50,22 @@ cargo run -- analyze --timestamps-mapped-to-utc \
 cargo run -- report --state ./ship-signal.sqlite 1
 ```
 
-The interval is start-inclusive and end-exclusive. Only product IDs and message text are sent to the configured OpenAI model for classification; feedback text may itself contain personal information. The model must support Rig structured output and should be qualified against representative feedback before production use. Each completed report includes copied inputs, classifications, supporting message indices, variants, counts, percentages, and invalid-row diagnostics. Null submission times cannot be assigned to an interval, so they are reported as invalid for every read. Duplicate message identities within a capture are excluded as ambiguous. Identified customers are counted once per product and need, across sources; unidentified feedback remains evidence but does not enter the denominator. Within a report, needs are grouped per product by exact, case-sensitive model-provided name. These names are not stable cross-week identifiers; cross-week identity and matching remain open design work.
+The interval is start-inclusive and end-exclusive. Only product IDs and message text are sent to the configured OpenAI model for classification; feedback text may itself contain personal information. The model must support Rig structured output and should be qualified against representative feedback before production use. Each completed report includes copied inputs, classifications, supporting message indices, variants, counts, percentages, and invalid-row diagnostics. Null submission times cannot be assigned to an interval, so they are reported as invalid for every read. Duplicate message identities within a capture are excluded as ambiguous. Identified customers are counted once per product and need, across sources; unidentified feedback remains evidence but does not enter the denominator.
+
+### Need identity across reports
+
+The current implementation uses human-reviewed mappings as its working identity policy; this is an implementation choice, not an accepted architectural decision. Each stable ID identifies an underlying need within one product. After reviewing the model labels, assign the same ID to labels that express the same need:
+
+```sh
+cargo run -- map-need --state ./ship-signal.sqlite --product demo-shop --label 'CSV export' --identity export-data
+cargo run -- map-need --state ./ship-signal.sqlite --product demo-shop --label 'download data as CSV' --identity export-data
+cargo run -- need-identities --state ./ship-signal.sqlite
+cargo run -- review-report --state ./ship-signal.sqlite 1
+```
+
+Labels match exactly and are case-sensitive. Analysis combines labels mapped to the same ID for the same product while retaining the original classifications, variants, and messages. Labels with no mapping have `"identity": null`; a product with any unresolved labels has `"needs_identity_review": true`. Its grouping and demand are provisional, so review and map its labels before using its results for ticket decisions. Review is required even when an individual group exceeds the threshold: another label could belong to the same need.
+
+After mapping labels, `review-report` creates a separate report from the saved feedback and classifications using the current mappings. It does not read the feedback source or call the model; `reviewed_from` identifies the original report. The original remains unchanged. To correct a mapping, run `map-need` with the current ID in `--previous-identity` and the corrected ID in `--identity`; the command fails if the current mapping has changed. Review the affected reports again as needed. The ID is not an implementation scope or a cooldown match. Earlier reports remain readable; those made before identity review was implemented are conservatively marked as requiring review. Ticket matching and cooldown similarity still require their own decisions in SUC-21 and SUC-22.
 
 ## Synthetic feedback database
 
