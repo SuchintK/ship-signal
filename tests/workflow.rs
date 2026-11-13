@@ -358,3 +358,324 @@ fn reviewed_report_recalculates_saved_classifications_after_mapping_without_rewr
     assert_eq!(workflow.report(original.id)?, original);
     Ok(())
 }
+
+#[test]
+fn review_queue_shows_unresolved_needs_with_evidence_and_confirmed_candidates() -> anyhow::Result<()>
+{
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("state.sqlite");
+    let mut workflow = Workflow::open(&path)?;
+    workflow.assign_need_identity("shop", "Export data", "export")?;
+    workflow.assign_need_identity("other-shop", "Export data", "other-export")?;
+    let mut first = feedback("1", Some("alice"));
+    first.text = "Please let me download orders as CSV".into();
+    let mut second = feedback("2", Some("alice"));
+    second.text = "I need a CSV download".into();
+    let mut source = Source(vec![first, second]);
+    let report = workflow.analyze(
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| {
+            Ok(vec![
+                Classification {
+                    message_index: 0,
+                    needs: vec![Need {
+                        name: "CSV download".into(),
+                        variant: Some("CSV".into()),
+                    }],
+                },
+                Classification {
+                    message_index: 1,
+                    needs: vec![Need {
+                        name: "CSV download".into(),
+                        variant: Some("CSV".into()),
+                    }],
+                },
+            ])
+        },
+    )?;
+    let queue = workflow.need_review_queue(report.id)?;
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].product_id, "shop");
+    assert_eq!(queue[0].label, "CSV download");
+    assert_eq!(queue[0].customer_count, 1);
+    assert_eq!(
+        queue[0].messages,
+        vec![
+            "Please let me download orders as CSV",
+            "I need a CSV download"
+        ]
+    );
+    assert_eq!(queue[0].variants, vec!["CSV"]);
+    assert_eq!(queue[0].candidates.len(), 1);
+    assert_eq!(queue[0].candidates[0].identity, "export");
+    workflow.assign_need_identity("shop", "CSV download", "export")?;
+    assert!(workflow.need_review_queue(report.id)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn interactive_review_confirms_suggestions_and_keeps_deferred_needs_unresolved()
+-> anyhow::Result<()> {
+    use ship_signal::{NeedSuggestion, SuggestionKind};
+    let dir = tempfile::tempdir()?;
+    let mut workflow = Workflow::open(dir.path().join("state.sqlite"))?;
+    workflow.assign_need_identity("shop", "Export data", "export")?;
+    let mut source = Source(vec![
+        feedback("first", Some("alice")),
+        feedback("second", Some("bob")),
+    ]);
+    let original = workflow.analyze(
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| {
+            Ok(vec![
+                Classification {
+                    message_index: 0,
+                    needs: vec![Need {
+                        name: "CSV download".into(),
+                        variant: Some("CSV".into()),
+                    }],
+                },
+                Classification {
+                    message_index: 1,
+                    needs: vec![Need {
+                        name: "Dark mode".into(),
+                        variant: None,
+                    }],
+                },
+            ])
+        },
+    )?;
+    let mut input = std::io::Cursor::new(b"1\n4\n");
+    let mut output = Vec::new();
+    let reviewed = workflow
+        .review_needs(original.id, &mut input, &mut output, false, |item| {
+            assert_eq!(item.candidates[0].identity, "export");
+            Ok(NeedSuggestion {
+                kind: SuggestionKind::Existing,
+                identity: Some("export".into()),
+                reason: "Related export request".into(),
+            })
+        })?
+        .unwrap();
+    let output = String::from_utf8(output)?;
+    assert!(output.contains("CSV download"));
+    assert!(output.contains("Related export request"));
+    assert!(output.contains("Dark mode"));
+    assert!(reviewed.products[0].needs_identity_review);
+    assert!(
+        reviewed.products[0]
+            .needs
+            .iter()
+            .any(|n| n.identity.as_deref() == Some("export"))
+    );
+    assert!(
+        reviewed.products[0]
+            .needs
+            .iter()
+            .any(|n| n.identity.is_none() && n.name == "Dark mode")
+    );
+    assert_eq!(workflow.report(original.id)?, original);
+    Ok(())
+}
+
+#[test]
+fn quitting_review_saves_only_confirmed_decisions_and_can_resume() -> anyhow::Result<()> {
+    use ship_signal::{NeedSuggestion, SuggestionKind};
+    let dir = tempfile::tempdir()?;
+    let mut workflow = Workflow::open(dir.path().join("state.sqlite"))?;
+    let mut source = Source(vec![
+        feedback("first", Some("alice")),
+        feedback("second", Some("bob")),
+    ]);
+    let original = workflow.analyze(
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| {
+            Ok(vec![
+                Classification {
+                    message_index: 0,
+                    needs: vec![Need {
+                        name: "Alpha".into(),
+                        variant: None,
+                    }],
+                },
+                Classification {
+                    message_index: 1,
+                    needs: vec![Need {
+                        name: "Beta".into(),
+                        variant: None,
+                    }],
+                },
+            ])
+        },
+    )?;
+    let suggestion = |_: &ship_signal::NeedReviewItem| {
+        Ok(NeedSuggestion {
+            kind: SuggestionKind::New,
+            identity: None,
+            reason: "New need".into(),
+        })
+    };
+    let result = workflow.review_needs(
+        original.id,
+        &mut std::io::Cursor::new(b"3\nalpha\nq\n"),
+        &mut Vec::new(),
+        false,
+        suggestion,
+    )?;
+    assert!(result.is_none());
+    assert_eq!(workflow.need_review_queue(original.id)?.len(), 1);
+    let resumed = workflow
+        .review_needs(
+            original.id,
+            &mut std::io::Cursor::new(b"2\nalpha\n"),
+            &mut Vec::new(),
+            false,
+            |_| {
+                Ok(NeedSuggestion {
+                    kind: SuggestionKind::Uncertain,
+                    identity: None,
+                    reason: "Needs review".into(),
+                })
+            },
+        )?
+        .unwrap();
+    assert!(!resumed.products[0].needs_identity_review);
+    assert_eq!(resumed.products[0].needs[0].customer_count, 2);
+    assert_eq!(workflow.report(original.id)?, original);
+    Ok(())
+}
+
+#[test]
+fn invalid_model_identity_cannot_write_a_mapping() -> anyhow::Result<()> {
+    use ship_signal::{NeedSuggestion, SuggestionKind};
+    let dir = tempfile::tempdir()?;
+    let mut workflow = Workflow::open(dir.path().join("state.sqlite"))?;
+    let mut source = Source(vec![feedback("first", Some("alice"))]);
+    let original = workflow.analyze(
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| {
+            Ok(vec![Classification {
+                message_index: 0,
+                needs: vec![Need {
+                    name: "Export".into(),
+                    variant: None,
+                }],
+            }])
+        },
+    )?;
+    let result = workflow.review_needs(
+        original.id,
+        &mut std::io::Cursor::new(b"1\n"),
+        &mut Vec::new(),
+        false,
+        |_| {
+            Ok(NeedSuggestion {
+                kind: SuggestionKind::Existing,
+                identity: Some("invented".into()),
+                reason: "Match".into(),
+            })
+        },
+    );
+    assert!(result.is_err());
+    assert!(workflow.need_identity_aliases()?.is_empty());
+    assert_eq!(workflow.report(original.id)?, original);
+    Ok(())
+}
+
+#[test]
+fn deferred_decisions_survive_quit_and_can_be_explicitly_reopened() -> anyhow::Result<()> {
+    use ship_signal::{NeedSuggestion, SuggestionKind};
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("state.sqlite");
+    let mut workflow = Workflow::open(&path)?;
+    let mut source = Source(vec![
+        feedback("first", Some("alice")),
+        feedback("second", Some("bob")),
+    ]);
+    let original = workflow.analyze(
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| {
+            Ok(vec![
+                Classification {
+                    message_index: 0,
+                    needs: vec![Need {
+                        name: "Alpha".into(),
+                        variant: None,
+                    }],
+                },
+                Classification {
+                    message_index: 1,
+                    needs: vec![Need {
+                        name: "Beta".into(),
+                        variant: None,
+                    }],
+                },
+            ])
+        },
+    )?;
+    let suggest = |_: &ship_signal::NeedReviewItem| {
+        Ok(NeedSuggestion {
+            kind: SuggestionKind::New,
+            identity: None,
+            reason: "New need".into(),
+        })
+    };
+    assert!(
+        workflow
+            .review_needs(
+                original.id,
+                &mut std::io::Cursor::new(b"4\nq\n"),
+                &mut Vec::new(),
+                false,
+                suggest
+            )?
+            .is_none()
+    );
+    drop(workflow);
+    let mut workflow = Workflow::open(&path)?;
+    let reviewed = workflow
+        .review_needs(
+            original.id,
+            &mut std::io::Cursor::new(b"3\nbeta\n"),
+            &mut Vec::new(),
+            false,
+            |item| {
+                assert_eq!(item.label, "Beta");
+                Ok(NeedSuggestion {
+                    kind: SuggestionKind::New,
+                    identity: None,
+                    reason: "New need".into(),
+                })
+            },
+        )?
+        .unwrap();
+    assert!(reviewed.products[0].needs_identity_review);
+    let complete = workflow
+        .review_needs(
+            original.id,
+            &mut std::io::Cursor::new(b"3\nalpha\n"),
+            &mut Vec::new(),
+            true,
+            |item| {
+                assert_eq!(item.label, "Alpha");
+                Ok(NeedSuggestion {
+                    kind: SuggestionKind::New,
+                    identity: None,
+                    reason: "New need".into(),
+                })
+            },
+        )?
+        .unwrap();
+    assert!(!complete.products[0].needs_identity_review);
+    Ok(())
+}

@@ -8,7 +8,9 @@ use std::{
     path::Path,
 };
 
+mod need_review;
 pub mod postgres_source;
+pub use need_review::{NeedSuggestion, SuggestionKind};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Feedback {
@@ -47,6 +49,20 @@ pub struct NeedIdentityAlias {
     pub product_id: String,
     pub label: String,
     pub identity: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NeedCandidate {
+    pub identity: String,
+    pub labels: Vec<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NeedReviewItem {
+    pub product_id: String,
+    pub label: String,
+    pub customer_count: usize,
+    pub messages: Vec<String>,
+    pub variants: Vec<String>,
+    pub candidates: Vec<NeedCandidate>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NeedReport {
@@ -108,7 +124,7 @@ pub struct Workflow {
 impl Workflow {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path)?;
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS analysis_reports (id INTEGER PRIMARY KEY, report TEXT NOT NULL); CREATE TABLE IF NOT EXISTS need_identity_aliases (product_id TEXT NOT NULL, label TEXT NOT NULL, identity TEXT NOT NULL, PRIMARY KEY (product_id, label));")?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS analysis_reports (id INTEGER PRIMARY KEY, report TEXT NOT NULL); CREATE TABLE IF NOT EXISTS need_identity_aliases (product_id TEXT NOT NULL, label TEXT NOT NULL, identity TEXT NOT NULL, PRIMARY KEY (product_id, label)); CREATE TABLE IF NOT EXISTS need_review_deferrals (report_id INTEGER NOT NULL, product_id TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY (report_id, product_id, label));")?;
         Ok(Self { connection })
     }
     /// Assign a product-scoped identity to a label after human review.
@@ -180,6 +196,57 @@ impl Workflow {
         let input = source.read(start, end)?;
         let classifications = classify(&input.feedback)?;
         self.complete_analysis(start, end, input, classifications, None)
+    }
+    /// List unresolved labels from saved evidence and product-scoped confirmed identities.
+    pub fn need_review_queue(&self, id: i64) -> Result<Vec<NeedReviewItem>> {
+        let report = self.report(id)?;
+        let aliases = self.need_identity_aliases()?;
+        let mut result = Vec::new();
+        for product in &report.products {
+            let mut candidates: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for alias in aliases
+                .iter()
+                .filter(|a| a.product_id == product.product_id)
+            {
+                candidates
+                    .entry(alias.identity.clone())
+                    .or_default()
+                    .push(alias.label.clone());
+            }
+            let candidates: Vec<NeedCandidate> = candidates
+                .into_iter()
+                .map(|(identity, labels)| NeedCandidate { identity, labels })
+                .collect();
+            for need in product.needs.iter().filter(|n| n.identity.is_none()) {
+                if aliases
+                    .iter()
+                    .any(|a| a.product_id == product.product_id && a.label == need.name)
+                {
+                    continue;
+                }
+                let messages = need
+                    .message_indices
+                    .iter()
+                    .map(|&i| {
+                        report
+                            .input
+                            .feedback
+                            .get(i)
+                            .map(|row| row.text.clone())
+                            .context("saved report references a missing message")
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                result.push(NeedReviewItem {
+                    product_id: product.product_id.clone(),
+                    label: need.name.clone(),
+                    customer_count: need.customer_count,
+                    messages,
+                    variants: need.variants.clone(),
+                    candidates: candidates.clone(),
+                });
+            }
+        }
+        Ok(result)
     }
     /// Recalculate grouping from saved evidence with the current reviewed mappings.
     pub fn review_report(&mut self, id: i64) -> Result<Report> {

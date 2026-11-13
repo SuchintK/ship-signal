@@ -54,11 +54,20 @@ The interval is start-inclusive and end-exclusive. Only product IDs and message 
 
 ### Need identity across reports
 
-The current implementation uses human-reviewed mappings as its working identity policy; this is an implementation choice, not an accepted architectural decision. Each stable ID identifies an underlying need within one product. After reviewing the model labels, assign the same ID to labels that express the same need:
+The review queue asks the configured analysis model to suggest a match for each unresolved label. For each suggestion, it shows the candidate identities, supporting messages, requested variants, and distinct-customer count. A person confirms an existing match, chooses a different one, creates a new need ID, or leaves the label unresolved:
+
+```sh
+export OPENAI_API_KEY='your-key'
+export SHIP_SIGNAL_ANALYSIS_MODEL='your-qualified-model'
+cargo run -- review-needs --state ./ship-signal.sqlite --report 1
+```
+
+Suggestions are never saved as mappings without a person choosing an action. Confirmed mappings and deferrals are saved as they are made; quit with `q` and run the same command to resume. Add `--include-deferred` to revisit labels previously left unresolved for that report. Once the queue has been reviewed, the command saves a separate report from the original feedback and classifications. The original report is unchanged. Deferred labels remain unresolved. For match suggestions the model receives the product ID, need label, candidate IDs and labels, supporting feedback text, variants, and the distinct-customer count. Feedback may contain personal information. Choose and qualify the model for the task before production use.
+
+The working identity policy is an implementation choice, not an accepted architectural decision. Each stable ID identifies an underlying need within one product. Direct mappings are also available:
 
 ```sh
 cargo run -- map-need --state ./ship-signal.sqlite --product demo-shop --label 'CSV export' --identity export-data
-cargo run -- map-need --state ./ship-signal.sqlite --product demo-shop --label 'download data as CSV' --identity export-data
 cargo run -- need-identities --state ./ship-signal.sqlite
 cargo run -- review-report --state ./ship-signal.sqlite 1
 ```
