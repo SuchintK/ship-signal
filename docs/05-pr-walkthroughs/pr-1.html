@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Ship Signal · PR 1 code walkthrough</title><style>
+:root{color-scheme:dark;--bg:#0b1118;--panel:#111d29;--line:#2b3c4a;--ink:#e4edf3;--muted:#a9bac5;--accent:#75dec0;--amber:#f4c87b}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}.shell{max-width:1440px;margin:auto;display:grid;grid-template-columns:260px minmax(0,1fr)}aside{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line);padding:32px 24px}aside strong{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}nav{display:grid;gap:10px;margin-top:24px;font-size:14px}nav a{color:var(--muted)}main{min-width:0;padding:0 7% 80px}.hero{padding:74px 0 40px;border-bottom:1px solid var(--line)}.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.18em;color:var(--accent);font-weight:700}h1{font-size:clamp(34px,5vw,58px);letter-spacing:-.035em;line-height:1.06;margin:18px 0}h2{font-size:clamp(25px,3vw,34px);line-height:1.2;letter-spacing:-.02em;margin:0}h3{font-size:16px;margin:0 0 8px}.intro{font-size:19px;color:var(--muted);max-width:800px}.meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}.meta span,.pill{border:1px solid var(--line);padding:5px 10px;border-radius:6px;font-size:12px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}.pill{display:inline-block;color:var(--amber);border-color:#705b3a}section{padding-top:56px;scroll-margin-top:20px}.section-head{display:flex;align-items:baseline;gap:16px}.step{font:700 14px ui-monospace,monospace;color:var(--accent)}p{max-width:900px;color:#d3dfe6}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;color:#9fe6d1}figure{margin:22px 0;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#081018}figcaption{padding:10px 15px;background:#162532;color:#d3e4e9;font:12px ui-monospace,monospace}figcaption span{float:right;color:#8ca5b0}pre{margin:0;padding:18px;overflow:auto;line-height:1.55}pre code{color:#d5e4ec;font-size:12px;white-space:pre}.note{border-left:3px solid var(--accent);background:#122820;padding:14px 18px;color:#d5eae1;margin:24px 0}.flow{display:flex;flex-wrap:wrap;gap:8px;margin:30px 0}.flow a{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 13px;font-size:14px}.flow a:not(:last-child):after{content:' →';color:var(--muted)}.grid,.math{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:24px 0}.grid article,.math div{border:1px solid var(--line);border-radius:8px;padding:20px;background:var(--panel)}.grid p{margin:0;color:var(--muted);font-size:14px}.math span,.math small{display:block;color:var(--muted);font-size:13px}.math b{display:block;font-size:25px;color:var(--accent);margin:8px 0}footer{border-top:1px solid var(--line);margin-top:60px;padding-top:20px;color:var(--muted);font-size:13px}@media(max-width:800px){.shell{display:block}aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:20px}nav{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:12px}main{padding:0 20px 50px}.hero{padding-top:42px}.grid,.math{grid-template-columns:1fr}figcaption span{float:none;display:block;margin-top:5px}}
+</style></head><body><div class="shell"><aside><strong>Ship Signal / PR 01</strong><nav><a href="#start">01 · CLI entry</a><a href="#source">02 · Feedback view</a><a href="#classify">03 · Classification</a><a href="#demand">04 · Demand</a><a href="#save">05 · Saved report</a><a href="#review">06 · Human review</a><a href="#example">07 · Worked example</a><a href="#tests">08 · Tests &amp; limits</a></nav></aside><main><header class="hero"><div class="eyebrow">Code walkthrough · PR #1</div><h1>From feedback<br>to reviewed demand.</h1><p class="intro">A guided trace of the PostgreSQL analysis and model-assisted review queue, written for a reader new to Rust.</p><div class="meta"><span>Analyzed source SHA: 0b3bb92e94f1d36924650841f537da5e13b3dce1</span><span>Base SHA: ba70d57e08ce3d7403ca877a35d1c1afcf31b8c6</span></div><div class="flow"><a href="#start">Command</a><a href="#source">Read view</a><a href="#classify">Classify</a><a href="#demand">Count</a><a href="#save">Save</a><a href="#review">Review</a></div><p><strong>Before:</strong> the base commit contained product design documentation, but no Rust feedback-analysis application. <strong>After:</strong> this branch adds a CLI, PostgreSQL connector, SQLite reports, and a human-reviewed model-suggestion flow. The walkthrough itself is not part of the analyzed source.</p></header><section id="start"><div class="section-head"><span class="step">01</span><h2>Start at the CLI</h2></div><p>The program begins in <code>main()</code>. The <code>clap</code> parser turns a terminal command into a <code>Command</code> variant; <code>match</code> chooses its branch. <code>Analyze</code> connects the source, opens SQLite, and passes a classification function into the workflow.</p><figure><figcaption>src/main.rs · lines 105–119 <span>exact source excerpt</span></figcaption><pre><code>105          Command::Analyze {
+106              database_url,
+107              schema,
+108              view,
+109              timestamps_mapped_to_utc,
+110              start,
+111              end,
+112              state,
+113              model,
+114          } =&gt; {
+115              let mut source =
+116                  PostgresSource::connect(&amp;database_url, &amp;schema, &amp;view, timestamps_mapped_to_utc)?;
+117              let mut workflow = Workflow::open(state)?;
+118              let runtime = tokio::runtime::Runtime::new()?;
+119              let report = workflow.analyze(&amp;mut source, start, end, |feedback| {</code></pre></figure><div class="note"><strong>Reading Rust.</strong> <code>fn</code> declares a function; <code>?</code> returns an error early; <code>&amp;mut</code> passes a mutable reference; the <code>|feedback| { ... }</code> expression is a closure, or function passed as a value.</div></section>
+<section id="source"><div class="section-head"><span class="step">02</span><h2>Read the feedback view</h2></div><p><code>PostgresSource::connect</code> requires an explicit confirmation that the customer mapped timestamps to UTC, checks that the configured relation is a view, and inspects the seven column types. The confirmation is a customer assertion: a timestamp type alone cannot prove the original timezone was mapped correctly.</p><figure><figcaption>src/postgres_source.rs · lines 21–25 <span>exact source excerpt</span></figcaption><pre><code> 21          timestamps_mapped_to_utc: bool,
+ 22      ) -&gt; Result&lt;Self&gt; {
+ 23          ensure!(
+ 24              timestamps_mapped_to_utc,
+ 25              &quot;explicitly confirm how the view maps source timestamps to UTC&quot;</code></pre></figure><figure><figcaption>src/postgres_source.rs · lines 65–76 <span>exact source excerpt</span></figcaption><pre><code> 65  impl FeedbackSource for PostgresSource {
+ 66      fn read(&amp;mut self, start: DateTime&lt;Utc&gt;, end: DateTime&lt;Utc&gt;) -&gt; Result&lt;AnalysisInput&gt; {
+ 67          ensure!(start &lt; end, &quot;interval start must precede end&quot;);
+ 68          let mut tx = self.client.build_transaction().read_only(true).start()?;
+ 69          let query = format!(
+ 70              &quot;SELECT product_id, feedback_source_id, source_message_id, customer_id, submitted_at, feedback_text, source_reference FROM {} WHERE (submitted_at &gt;= $1 AND submitted_at &lt; $2) OR submitted_at IS NULL ORDER BY submitted_at NULLS LAST, product_id, feedback_source_id, source_message_id&quot;,
+ 71              self.view
+ 72          );
+ 73          let rows = tx
+ 74              .query(&amp;query, &amp;[&amp;start, &amp;end])
+ 75              .context(&quot;read feedback view&quot;)?;
+ 76          tx.commit()?;</code></pre></figure><p>The database transaction is read-only. The interval includes <code>start</code> and excludes <code>end</code>; rows with a null timestamp are fetched so they can be diagnosed. Invalid required fields are excluded with reason counts. Duplicate <em>valid-candidate</em> message identities (product, source, message ID) are all excluded as ambiguous. Null customer IDs remain valid evidence.</p></section>
+<section id="classify"><div class="section-head"><span class="step">03</span><h2>Classify and validate</h2></div><p>The workflow reads one input snapshot and calls the supplied classifier. In the CLI, the closure sends product IDs and message text to the configured OpenAI model through Rig. The prompt asks for explicit requests and variants. The model output is not trusted merely because it is structured: the workflow checks it has one valid classification per message and nonempty need labels.</p><figure><figcaption>src/lib.rs · lines 188–199 <span>exact source excerpt</span></figcaption><pre><code>188      pub fn analyze(
+189          &amp;mut self,
+190          source: &amp;mut impl FeedbackSource,
+191          start: DateTime&lt;Utc&gt;,
+192          end: DateTime&lt;Utc&gt;,
+193          classify: impl FnOnce(&amp;[Feedback]) -&gt; Result&lt;Vec&lt;Classification&gt;&gt;,
+194      ) -&gt; Result&lt;Report&gt; {
+195          ensure!(start &lt; end, &quot;interval start must precede end&quot;);
+196          let input = source.read(start, end)?;
+197          let classifications = classify(&amp;input.feedback)?;
+198          self.complete_analysis(start, end, input, classifications, None)
+199      }</code></pre></figure><figure><figcaption>src/main.rs · lines 123–128 <span>exact source excerpt</span></figcaption><pre><code>123                  let result = runtime.block_on(async {
+124                      let provider = OpenAI::from_env().context(&quot;OPENAI_API_KEY is required&quot;)?;
+125                      let agent = AgentBuilder::new(provider.completion(&amp;model)).build();
+126                      agent.prompt_typed::&lt;Classifications&gt;(prompt).await.map(|response| response.output).context(&quot;feedback classification failed&quot;)
+127                  })?;
+128                  Ok(result.classifications)</code></pre></figure><figure><figcaption>src/lib.rs · lines 270–278 <span>exact source excerpt</span></figcaption><pre><code>270          classifications.sort_by_key(|c| c.message_index);
+271          ensure!(
+272              classifications.len() == input.feedback.len(),
+273              &quot;classifier must return one classification per message&quot;
+274          );
+275          for (i, classification) in classifications.iter().enumerate() {
+276              ensure!(
+277                  classification.message_index == i,
+278                  &quot;classifier returned missing, duplicate, or invalid message index&quot;</code></pre></figure><div class="note"><strong>Boundary:</strong> the classifier is provided by the caller; <code>Workflow::analyze</code> owns orchestration and deterministic counting, not the model's semantic accuracy. Actual model quality was not established by the controlled tests.</div></section>
+<section id="demand"><div class="section-head"><span class="step">04</span><h2>Group needs and calculate demand</h2></div><p>For each product, the workflow keeps a set of identified customers who made any feature request. Each need group has its own customer set, variants, and supporting message indexes. A reviewed alias maps a label to a product-scoped identity; otherwise the label becomes an unresolved group.</p><figure><figcaption>src/lib.rs · lines 299–321 <span>exact source excerpt</span></figcaption><pre><code>299          let mut products: BTreeMap&lt;String, ProductDemand&gt; = BTreeMap::new();
+300          for (row, classification) in input.feedback.iter().zip(&amp;classifications) {
+301              let product = products.entry(row.product_id.clone()).or_default();
+302              if !classification.needs.is_empty() {
+303                  if let Some(customer) = &amp;row.customer_id {
+304                      product.customers.insert(customer.clone());
+305                  }
+306              }
+307              for need in &amp;classification.needs {
+308                  let identity = aliases.get(&amp;(row.product_id.clone(), need.name.clone()));
+309                  let key = match identity {
+310                      Some(identity) =&gt; GroupKey::Mapped(identity.clone()),
+311                      None =&gt; GroupKey::Unresolved(need.name.clone()),
+312                  };
+313                  let group = product.needs.entry(key).or_default();
+314                  group.labels.insert(need.name.clone());
+315                  if let Some(customer) = &amp;row.customer_id {
+316                      group.customers.insert(customer.clone());
+317                  }
+318                  if let Some(variant) = &amp;need.variant {
+319                      group.variants.insert(variant.clone());
+320                  }
+321                  group.messages.insert(classification.message_index);</code></pre></figure><figure><figcaption>src/lib.rs · lines 324–350 <span>exact source excerpt</span></figcaption><pre><code>324          let products = products
+325              .into_iter()
+326              .map(|(product_id, product)| {
+327                  let denominator = product.customers.len();
+328                  let needs_identity_review = product
+329                      .needs
+330                      .keys()
+331                      .any(|key| matches!(key, GroupKey::Unresolved(_)));
+332                  let needs = product
+333                      .needs
+334                      .into_iter()
+335                      .map(|(key, need)| {
+336                          let name = need.labels.iter().next().cloned().unwrap_or_default();
+337                          let count = need.customers.len();
+338                          NeedReport {
+339                              name,
+340                              identity: match key {
+341                                  GroupKey::Mapped(identity) =&gt; Some(identity),
+342                                  GroupKey::Unresolved(_) =&gt; None,
+343                              },
+344                              customer_count: count,
+345                              percentage: if denominator == 0 {
+346                                  0.0
+347                              } else {
+348                                  100.0 * count as f64 / denominator as f64
+349                              },
+350                              qualifies: denominator &gt; 0 &amp;&amp; count &gt; denominator / 4,</code></pre></figure><p>Sets deduplicate repeated customers while message indexes retain evidence. The denominator excludes unidentified and bug-only feedback. The integer comparison <code>count &gt; denominator / 4</code>, together with the nonzero check, means strictly more than 25%. A product with unresolved groups is marked <code>needs_identity_review</code>; its grouping is provisional for ticket decisions.</p></section>
+<section id="save"><div class="section-head"><span class="step">05</span><h2>Save an explainable report</h2></div><p><code>Report</code> stores the interval, copied inputs and diagnostics, classifications, and product results. SQLite inserts the JSON report inside a transaction. On failure before commit, the insert and update do not leave a partially saved report.</p><figure><figcaption>src/lib.rs · lines 364–381 <span>exact source excerpt</span></figcaption><pre><code>364          let mut report = Report {
+365              id: 0,
+366              reviewed_from,
+367              start,
+368              end,
+369              input,
+370              classifications,
+371              products,
+372          };
+373          let tx = self.connection.transaction()?;
+374          tx.execute(&quot;INSERT INTO analysis_reports(report) VALUES (&#x27;&#x27;)&quot;, [])?;
+375          report.id = tx.last_insert_rowid();
+376          tx.execute(
+377              &quot;UPDATE analysis_reports SET report = ?1 WHERE id = ?2&quot;,
+378              params![serde_json::to_string(&amp;report)?, report.id],
+379          )?;
+380          tx.commit()?;
+381          Ok(report)</code></pre></figure><p>The <code>report</code> command loads that saved copy. Source changes and later classifier output do not rewrite it. Data is kept in the separate SQLite application-state database, not the customer feedback source.</p></section>
+<section id="review"><div class="section-head"><span class="step">06</span><h2>Review suggested matches</h2></div><p><code>review-needs</code> loads unresolved labels from a saved report and confirmed aliases for the same product. Rig suggests an existing match, a new need, or an uncertain result. A suggested existing ID must be among that product's candidates; a new or uncertain suggestion must not contain an ID.</p><figure><figcaption>src/need_review.rs · lines 75–95 <span>exact source excerpt</span></figcaption><pre><code> 75          for original in queue {
+ 76              // Refresh candidates after each decision, including newly created identities.
+ 77              let Some(item) = self.need_review_queue(id)?.into_iter().find(|item| {
+ 78                  item.product_id == original.product_id &amp;&amp; item.label == original.label
+ 79              }) else {
+ 80                  continue;
+ 81              };
+ 82              let suggestion = suggest(&amp;item)?;
+ 83              match suggestion.kind {
+ 84                  SuggestionKind::Existing =&gt; ensure!(
+ 85                      suggestion
+ 86                          .identity
+ 87                          .as_ref()
+ 88                          .is_some_and(|id| item.candidates.iter().any(|c| &amp;c.identity == id)),
+ 89                      &quot;model suggested an unknown need identity for this product&quot;
+ 90                  ),
+ 91                  SuggestionKind::New | SuggestionKind::Uncertain =&gt; ensure!(
+ 92                      suggestion.identity.is_none(),
+ 93                      &quot;model returned an identity for a new or uncertain suggestion&quot;
+ 94                  ),
+ 95              }</code></pre></figure><figure><figcaption>src/need_review.rs · lines 141–159 <span>exact source excerpt</span></figcaption><pre><code>141              loop {
+142                  let Some(choice) = read_line(
+143                      input,
+144                      output,
+145                      &quot;[1] Confirm suggested match [2] Choose existing [3] Create new [4] Leave unresolved [q] Quit: &quot;,
+146                  )?
+147                  else {
+148                      return Ok(None);
+149                  };
+150                  match choice.as_str() {
+151                      &quot;1&quot; =&gt; match &amp;suggestion.identity {
+152                          Some(identity) =&gt; {
+153                              self.assign_need_identity(&amp;item.product_id, &amp;item.label, identity)?;
+154                              break;
+155                          }
+156                          None =&gt; writeln!(
+157                              output,
+158                              &quot;No existing match to confirm; choose another option.&quot;
+159                          )?,</code></pre></figure><p>The reviewer can confirm a proposed match, select another existing identity, create a new identity, defer, or quit. Confirmed mappings are saved as decisions are made; deferrals are stored per report, product, and label. Resume the report normally to skip deferred items, or use <code>--include-deferred</code> to revisit them. Model or input errors return without silently assigning a match.</p><figure><figcaption>src/need_review.rs · lines 195–210 <span>exact source excerpt</span></figcaption><pre><code>195                      &quot;4&quot; =&gt; {
+196                          self.connection.execute(&quot;INSERT INTO need_review_deferrals (report_id, product_id, label) VALUES (?1, ?2, ?3) ON CONFLICT DO NOTHING&quot;, rusqlite::params![id, item.product_id, item.label])?;
+197                          break;
+198                      }
+199                      &quot;q&quot; | &quot;Q&quot; =&gt; {
+200                          writeln!(
+201                              output,
+202                              &quot;Review stopped. Confirmed decisions are saved; resume using the same report ID.&quot;
+203                          )?;
+204                          return Ok(None);
+205                      }
+206                      _ =&gt; writeln!(output, &quot;Choose 1, 2, 3, 4, or q.&quot;)?,
+207                  }
+208              }
+209          }
+210          let reviewed = self.review_report(id)?;</code></pre></figure><p>After the queue, <code>review_report</code> recalculates from the saved feedback and classifications with current mappings. It creates a new report whose <code>reviewed_from</code> points to the earlier one; it does not reread PostgreSQL or invoke the classifier. This is distinct from the future historical rerun described in ADR-0005.</p><figure><figcaption>src/lib.rs · lines 252–260 <span>exact source excerpt</span></figcaption><pre><code>252      pub fn review_report(&amp;mut self, id: i64) -&gt; Result&lt;Report&gt; {
+253          let previous = self.report(id)?;
+254          self.complete_analysis(
+255              previous.start,
+256              previous.end,
+257              previous.input,
+258              previous.classifications,
+259              Some(id),
+260          )</code></pre></figure></section>
+<section id="example"><div class="section-head"><span class="step">07</span><h2>Worked example</h2></div><div class="pill">Illustrative · not a production result</div><p>Suppose four identified customers make feature requests in a week. Alice sends two messages asking for “CSV export”; Bob asks to “download CSV”; Chloe and Dev each request something else. Another person sends a bug-only message, and one export message has no customer ID.</p><div class="math"><div><span>Before review</span><b>1 / 4 = 25%</b><small>for each separate export label; neither exceeds the threshold</small></div><div><span>After both labels are mapped to one need</span><b>2 / 4 = 50%</b><small>Alice and Bob count once each; the need qualifies</small></div></div><p>The unidentified message remains evidence but does not enter either count; the bug-only customer does not enter the denominator. The CSV variant and the supporting messages remain visible. This outcome assumes the model has classified those messages as shown and the reviewer confirms the mapping.</p></section>
+<section id="tests"><div class="section-head"><span class="step">08</span><h2>Tests, limits, and where to go next</h2></div><div class="grid"><article><h3>Workflow</h3><p><code>tests/workflow.rs</code> uses temporary SQLite and controlled classifier responses. It covers distinct counts, the 25% boundary, reviewed identities, original-report preservation, invalid suggestions, quit/resume and persisted deferrals.</p></article><article><h3>Connector</h3><p><code>tests/postgres.rs</code> checks a real PostgreSQL view, interval boundaries, invalid/duplicate rows, explicit non-UTC conversion, and the fixture account’s write privileges. These tests are ignored by default and were run explicitly for this walkthrough.</p></article><article><h3>CLI</h3><p><code>tests/review_cli.rs</code> runs the actual command against a controlled HTTP model response and confirms the match is saved only after input.</p></article><article><h3>Limits</h3><p>No live model was exercised in this run. Suggestions need representative model qualification. Scheduling, MySQL, investigation, approval, and historical source reruns are future work. The sample database contains synthetic feedback, not pilot evidence.</p></article></div><div class="note"><strong>Observed checks at the source commit:</strong> <code>cargo test</code> passed 12 workflow tests and 1 CLI test; 4 PostgreSQL tests were run separately with the fixture and passed. No claim is made about model usefulness or pilot outcomes.</div></section><footer>PR #1 · This document records the code at the source SHA above. Later code changes can make it stale.</footer></main></div></body></html>
