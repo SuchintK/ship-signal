@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Rust concepts · Variables and bindings</title><style>
+:root{color-scheme:dark;--bg:#101820;--panel:#192832;--ink:#edf4f6;--muted:#b5c8d1;--line:#36515e;--mint:#8be2c2;--blue:#a4d3ff;--amber:#f4d18f}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:20px}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.7 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header,main,footer{max-width:1020px;padding:36px 28px;margin:auto}header{padding-top:55px;padding-bottom:14px}.eyebrow{color:var(--mint);font-size:12px;font-weight:700;letter-spacing:.13em;text-transform:uppercase}h1{font-size:clamp(33px,5vw,53px);line-height:1.12;letter-spacing:-.03em;margin:18px 0}h2{font-size:27px;line-height:1.25;margin:0 0 18px}h3{font-size:21px;line-height:1.3;margin:25px 0 12px}.lede{font-size:21px;color:var(--muted);max-width:800px}a{color:var(--mint);text-underline-offset:4px}a:focus-visible{outline:3px solid var(--amber);outline-offset:4px}nav{display:flex;flex-wrap:wrap;gap:10px 20px;font-size:14px;border-block:1px solid var(--line);padding:19px 0;margin-top:26px}p{margin:12px 0 18px}section{margin-bottom:44px}code{font:.88em/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--blue);overflow-wrap:anywhere}figure{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0a131b;margin:20px 0}figcaption{padding:11px 17px;background:var(--panel);font-size:13px;color:var(--muted)}pre{margin:0;padding:20px;overflow-x:auto;line-height:1.6}pre code{color:#e0edf3;white-space:pre;overflow-wrap:normal}.note{border-left:4px solid var(--mint);background:var(--panel);border-radius:0 10px 10px 0;padding:17px 20px;margin:22px 0}.warning{border-left-color:var(--amber)}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:15px;margin:18px 0 24px}th,td{border-bottom:1px solid var(--line);text-align:left;vertical-align:top;padding:12px}th{background:var(--panel);color:var(--mint)}li{margin:8px 0}.caption,.meta{color:var(--muted);font-size:13px}.meta{overflow-wrap:anywhere}.next{display:flex;flex-wrap:wrap;gap:20px;justify-content:space-between;border-top:1px solid var(--line);padding-top:20px}footer{color:var(--muted);font-size:13px;padding-top:0}.badge{display:inline-block;border:1px solid var(--line);border-radius:18px;padding:2px 10px;color:var(--amber);font-size:12px;margin-bottom:10px}
+@media(max-width:650px){header,main,footer{padding-inline:18px}header{padding-top:32px}body{font-size:16px}h2{font-size:24px}th,td{padding:10px}pre{padding:15px}}
+@media print{body{color:#1e303a;background:white}header,main,footer{max-width:none;padding:15px}nav{display:none}.lede,.meta,.caption,footer{color:#485e69}code,a,.eyebrow{color:#14624d}figure{background:#f2f6f7;border-color:#aabcc4}figcaption,th,.note{background:#eaf2f3;color:#223c49}pre code{color:#152b37}pre{white-space:pre-wrap}pre code{white-space:pre-wrap}h2,h3{break-after:avoid}tr,figure{break-inside:avoid}}
+</style></head>
+<body><header><div class="eyebrow">Ship Signal / Rust concepts / 01</div><h1>Variables and bindings</h1><p class="lede">Understand what a name refers to, what mut allows, and how a variable differs from a reference.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>217ee8f20d7e561a25062331f99dc8fba99a1d59</code></p><nav aria-label="Lesson contents"><a href="#bindings">A binding gives a value a name</a><a href="#shadowing">Changing a value versus creating a new binding</a><a href="#references">A variable can hold a value or a reference</a><a href="#project">In Ship Signal: mutating a local vector</a></nav></header><main><section id="bindings"><h2>A binding gives a value a name</h2>
+<p>In <code>let count = 3;</code>, <code>count</code> is a binding: a name associated with a value. In everyday Rust discussion, people often call this a variable. By default, you cannot assign a different value through that binding.</p>
+<figure data-kind="run"><figcaption>Standalone Rust example</figcaption><pre><code>fn main() {
+    let count = 3;
+    println!(&quot;{count}&quot;);
+
+    let mut total = 3;
+    total += 1;
+    println!(&quot;{total}&quot;); // 4
+}</code></pre></figure>
+<p><code>mut</code> permits mutation through this binding. It does not change the value’s type, automatically create a reference, or grant access to an external database.</p>
+</section><section id="shadowing"><h2>Changing a value versus creating a new binding</h2>
+<p>Another <code>let</code> with the same name creates a new binding, called shadowing. The new binding can even have a different type. Assigning to an existing mutable binding keeps its type.</p>
+<figure data-kind="run"><figcaption>Standalone Rust example</figcaption><pre><code>fn main() {
+    let count = &quot;3&quot;;       // &amp;str
+    let count: usize = count.parse().unwrap(); // a new binding
+    println!(&quot;{count}&quot;);
+}</code></pre></figure>
+<p>This example uses <code>unwrap()</code> because the literal <code>"3"</code> is known to parse. In code handling fallible input, use <code>Result</code> and error handling instead; see <a href="05-results-and-errors.html">Results and errors</a>.</p>
+</section><section id="references"><h2>A variable can hold a value or a reference</h2>
+<p>A reference is a value that borrows access to another value. A binding can hold an owned value, a shared reference, or a mutable reference. “Variable” and “reference” describe different aspects of the code.</p>
+<div class="table-wrap"><table><thead><tr><th>Code</th><th>What the binding holds</th><th>What it permits</th></tr></thead><tbody><tr><td><code>let mut count = 10;</code></td><td>An integer value.</td><td>Change <code>count</code>.</td></tr><tr><td><code>let read = &amp;count;</code></td><td>A shared reference to the integer.</td><td>Read the integer through <code>read</code>.</td></tr><tr><td><code>let write = &amp;mut count;</code></td><td>An exclusive mutable reference to the integer.</td><td>Change the integer through <code>write</code>.</td></tr></tbody></table></div>
+<p>The reference declarations above illustrate the types of binding; their allowed overlap depends on how the references are used. The <a href="02-references-and-borrowing.html">references lesson</a> shows a complete valid example.</p>
+</section><section id="project"><h2>In Ship Signal: mutating a local vector</h2>
+<p>The <code>mut classifications</code> parameter allows the function to reorder its owned vector. <code>sort_by_key</code> changes that vector’s order in place. The classification count is checked before sorting.</p>
+<figure data-kind="source" data-path="src/lib.rs" data-start="293" data-end="305"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L293-L305">src/lib.rs · lines 293–305</a> · exact source excerpt</figcaption><pre><code>293      fn complete_analysis(
+294          &amp;mut self,
+295          start: DateTime&lt;Utc&gt;,
+296          end: DateTime&lt;Utc&gt;,
+297          input: AnalysisInput,
+298          mut classifications: Vec&lt;Classification&gt;,
+299          reviewed_from: Option&lt;i64&gt;,
+300      ) -&gt; Result&lt;Report&gt; {
+301          ensure!(
+302              classifications.len() == input.feedback.len(),
+303              &quot;classifier must return one classification per message&quot;
+304          );
+305          classifications.sort_by_key(|c| c.message_index);</code></pre></figure>
+<div class="note"><strong>Read the placement of mut.</strong> <code>mut classifications: Vec&lt;Classification&gt;</code> is a mutable binding holding an owned vector. <code>&amp;mut Vec&lt;Classification&gt;</code> would describe a borrowed vector instead.</div>
+</section><div class="next"><a href="README.md">← Lesson index</a><a href="02-references-and-borrowing.html">Shared and mutable references →</a></div></main><footer><p>Standalone examples are teaching examples, not application changes. Exact Ship Signal excerpts refer to the source commit above; their links open GitHub. Each lesson works offline without external styles, scripts, or images.</p></footer></body></html>
