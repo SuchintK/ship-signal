@@ -267,11 +267,11 @@ impl Workflow {
         mut classifications: Vec<Classification>,
         reviewed_from: Option<i64>,
     ) -> Result<Report> {
-        classifications.sort_by_key(|c| c.message_index);
         ensure!(
             classifications.len() == input.feedback.len(),
             "classifier must return one classification per message"
         );
+        classifications.sort_by_key(|c| c.message_index);
         for (i, classification) in classifications.iter().enumerate() {
             ensure!(
                 classification.message_index == i,
