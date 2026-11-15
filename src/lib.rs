@@ -99,6 +99,37 @@ pub struct Report {
     pub products: Vec<ProductReport>,
 }
 
+// The row's primary key is the report ID; older rows may also have it in the JSON.
+#[derive(Serialize, Deserialize)]
+struct StoredReport {
+    #[serde(default, rename = "id", skip_serializing)]
+    legacy_id: Option<i64>,
+    #[serde(default)]
+    reviewed_from: Option<i64>,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    input: AnalysisInput,
+    classifications: Vec<Classification>,
+    products: Vec<ProductReport>,
+}
+
+impl StoredReport {
+    fn into_report(self, id: i64) -> Result<Report> {
+        if self.legacy_id.is_some_and(|legacy_id| legacy_id != id) {
+            bail!("stored report ID does not match");
+        }
+        Ok(Report {
+            id,
+            reviewed_from: self.reviewed_from,
+            start: self.start,
+            end: self.end,
+            input: self.input,
+            classifications: self.classifications,
+            products: self.products,
+        })
+    }
+}
+
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum GroupKey {
     Mapped(String),
@@ -361,8 +392,8 @@ impl Workflow {
                 }
             })
             .collect();
-        let mut report = Report {
-            id: 0,
+        let report = StoredReport {
+            legacy_id: None,
             reviewed_from,
             start,
             end,
@@ -370,15 +401,13 @@ impl Workflow {
             classifications,
             products,
         };
-        let tx = self.connection.transaction()?;
-        tx.execute("INSERT INTO analysis_reports(report) VALUES ('')", [])?;
-        report.id = tx.last_insert_rowid();
-        tx.execute(
-            "UPDATE analysis_reports SET report = ?1 WHERE id = ?2",
-            params![serde_json::to_string(&report)?, report.id],
+        let json = serde_json::to_string(&report)?;
+        let id: i64 = self.connection.query_row(
+            "INSERT INTO analysis_reports(report) VALUES (?1) RETURNING id",
+            params![json],
+            |row| row.get(0),
         )?;
-        tx.commit()?;
-        Ok(report)
+        report.into_report(id)
     }
     pub fn report(&self, id: i64) -> Result<Report> {
         let json: String = self
@@ -389,10 +418,7 @@ impl Workflow {
                 |row| row.get(0),
             )
             .context("report not found")?;
-        let report: Report = serde_json::from_str(&json)?;
-        if report.id != id {
-            bail!("stored report ID does not match");
-        }
-        Ok(report)
+        let report: StoredReport = serde_json::from_str(&json)?;
+        report.into_report(id)
     }
 }

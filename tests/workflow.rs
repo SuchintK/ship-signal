@@ -679,3 +679,65 @@ fn deferred_decisions_survive_quit_and_can_be_explicitly_reopened() -> anyhow::R
     assert!(!complete.products[0].needs_identity_review);
     Ok(())
 }
+
+#[test]
+fn loads_reports_when_only_the_database_row_has_an_id_and_preserves_older_reports()
+-> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("state.sqlite");
+    // Seed report rows in the old and new on-disk formats, as an existing installation would.
+    let connection = rusqlite::Connection::open(&path)?;
+    connection.execute_batch(
+        "CREATE TABLE analysis_reports (id INTEGER PRIMARY KEY, report TEXT NOT NULL);",
+    )?;
+    let report_content = r#"{"reviewed_from":null,"start":"2026-11-06T00:00:00Z","end":"2026-11-13T00:00:00Z","input":{"feedback":[],"diagnostics":{}},"classifications":[],"products":[]}"#;
+    let legacy_content = r#"{"id":42,"reviewed_from":null,"start":"2026-11-06T00:00:00Z","end":"2026-11-13T00:00:00Z","input":{"feedback":[],"diagnostics":{}},"classifications":[],"products":[]}"#;
+    connection.execute(
+        "INSERT INTO analysis_reports(id, report) VALUES (?1, ?2)",
+        rusqlite::params![41, report_content],
+    )?;
+    connection.execute(
+        "INSERT INTO analysis_reports(id, report) VALUES (?1, ?2)",
+        rusqlite::params![42, legacy_content],
+    )?;
+    connection.execute(
+        "INSERT INTO analysis_reports(id, report) VALUES (?1, ?2)",
+        rusqlite::params![43, legacy_content],
+    )?;
+    drop(connection);
+    let workflow = Workflow::open(&path)?;
+    assert_eq!(workflow.report(41)?.id, 41);
+    assert_eq!(workflow.report(42)?.id, 42);
+    assert_eq!(workflow.report(41)?.input, workflow.report(42)?.input);
+    assert!(workflow.report(43).is_err());
+    Ok(())
+}
+
+#[test]
+fn saves_and_reopens_report_when_existing_reports_are_write_once() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("state.sqlite");
+    let connection = rusqlite::Connection::open(&path)?;
+    connection.execute_batch("CREATE TABLE analysis_reports (id INTEGER PRIMARY KEY, report TEXT NOT NULL); CREATE TRIGGER reports_are_write_once BEFORE UPDATE ON analysis_reports BEGIN SELECT RAISE(ABORT, 'reports are write once'); END;")?;
+    drop(connection);
+    let mut workflow = Workflow::open(&path)?;
+    let mut source = Source(vec![feedback("1", Some("alice"))]);
+    let report = workflow.analyze(
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| {
+            Ok(vec![Classification {
+                message_index: 0,
+                needs: vec![Need {
+                    name: "export".into(),
+                    variant: None,
+                }],
+            }])
+        },
+    )?;
+    assert!(report.id > 0);
+    drop(workflow);
+    assert_eq!(Workflow::open(&path)?.report(report.id)?, report);
+    Ok(())
+}

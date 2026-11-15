@@ -23,7 +23,7 @@ The first analysis workflow supports a chosen interval against a PostgreSQL feed
 
 ## PostgreSQL feedback analysis
 
-Install Rust and PostgreSQL, then build with `cargo build`. This initial CLI supports an explicit interval; it does not schedule weekly runs. It stores reports in a separate local SQLite file. Back up that file using SQLite's online backup facilities or while Ship Signal is stopped. Restrict access to the file: it contains copied customer feedback and classifications. Retention and deletion policy remain open.
+Install Rust and PostgreSQL, then build with `cargo build`. This initial CLI supports an explicit interval; it does not schedule weekly runs. It stores reports in a separate local SQLite file. Back up that file using SQLite's online backup facilities or while Ship Signal is stopped. Restrict access to the file: it contains copied customer feedback and classifications. Retention and deletion policy remain open. Reports saved by this version keep their ID in the SQLite row rather than the JSON; earlier program versions cannot read the new report format. Back up the database before rolling back. Existing reports from the earlier format remain readable.
 
 Expose a PostgreSQL **view** with these exact columns and types:
 
