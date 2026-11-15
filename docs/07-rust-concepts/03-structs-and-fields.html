@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Rust concepts · Structs and fields</title><style>
+:root{color-scheme:dark;--bg:#101820;--panel:#192832;--ink:#edf4f6;--muted:#b5c8d1;--line:#36515e;--mint:#8be2c2;--blue:#a4d3ff;--amber:#f4d18f}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:20px}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.7 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header,main,footer{max-width:1020px;padding:36px 28px;margin:auto}header{padding-top:55px;padding-bottom:14px}.eyebrow{color:var(--mint);font-size:12px;font-weight:700;letter-spacing:.13em;text-transform:uppercase}h1{font-size:clamp(33px,5vw,53px);line-height:1.12;letter-spacing:-.03em;margin:18px 0}h2{font-size:27px;line-height:1.25;margin:0 0 18px}h3{font-size:21px;line-height:1.3;margin:25px 0 12px}.lede{font-size:21px;color:var(--muted);max-width:800px}a{color:var(--mint);text-underline-offset:4px}a:focus-visible{outline:3px solid var(--amber);outline-offset:4px}nav{display:flex;flex-wrap:wrap;gap:10px 20px;font-size:14px;border-block:1px solid var(--line);padding:19px 0;margin-top:26px}p{margin:12px 0 18px}section{margin-bottom:44px}code{font:.88em/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--blue);overflow-wrap:anywhere}figure{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0a131b;margin:20px 0}figcaption{padding:11px 17px;background:var(--panel);font-size:13px;color:var(--muted)}pre{margin:0;padding:20px;overflow-x:auto;line-height:1.6}pre code{color:#e0edf3;white-space:pre;overflow-wrap:normal}.note{border-left:4px solid var(--mint);background:var(--panel);border-radius:0 10px 10px 0;padding:17px 20px;margin:22px 0}.warning{border-left-color:var(--amber)}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:15px;margin:18px 0 24px}th,td{border-bottom:1px solid var(--line);text-align:left;vertical-align:top;padding:12px}th{background:var(--panel);color:var(--mint)}li{margin:8px 0}.caption,.meta{color:var(--muted);font-size:13px}.meta{overflow-wrap:anywhere}.next{display:flex;flex-wrap:wrap;gap:20px;justify-content:space-between;border-top:1px solid var(--line);padding-top:20px}footer{color:var(--muted);font-size:13px;padding-top:0}.badge{display:inline-block;border:1px solid var(--line);border-radius:18px;padding:2px 10px;color:var(--amber);font-size:12px;margin-bottom:10px}
+@media(max-width:650px){header,main,footer{padding-inline:18px}header{padding-top:32px}body{font-size:16px}h2{font-size:24px}th,td{padding:10px}pre{padding:15px}}
+@media print{body{color:#1e303a;background:white}header,main,footer{max-width:none;padding:15px}nav{display:none}.lede,.meta,.caption,footer{color:#485e69}code,a,.eyebrow{color:#14624d}figure{background:#f2f6f7;border-color:#aabcc4}figcaption,th,.note{background:#eaf2f3;color:#223c49}pre code{color:#152b37}pre{white-space:pre-wrap}pre code{white-space:pre-wrap}h2,h3{break-after:avoid}tr,figure{break-inside:avoid}}
+</style></head>
+<body><header><div class="eyebrow">Ship Signal / Rust concepts / 03</div><h1>Structs and fields</h1><p class="lede">Read the named pieces of a Rust value, and distinguish an in-memory type from a database table.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>217ee8f20d7e561a25062331f99dc8fba99a1d59</code></p><nav aria-label="Lesson contents"><a href="#shape">A struct groups related named fields</a><a href="#meaning">How do these fields relate to the product terms?</a><a href="#nested">Struct fields can contain other collections of values</a><a href="#storage">A struct does not automatically create a table</a></nav></header><main><section id="shape"><h2>A struct groups related named fields</h2>
+<p>A struct defines a type with named fields. Ship Signal’s <code>Need</code> keeps a need’s name and optional requested variant together.</p>
+<figure data-kind="source" data-path="src/lib.rs" data-start="26" data-end="29"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L26-L29">src/lib.rs · lines 26–29</a> · exact source excerpt</figcaption><pre><code> 26  pub struct Need {
+ 27      pub name: String,
+ 28      pub variant: Option&lt;String&gt;,
+ 29  }</code></pre></figure><figure data-kind="run"><figcaption>Standalone simplified Need example</figcaption><pre><code>struct Need {
+    name: String,
+    variant: Option&lt;String&gt;,
+}
+
+fn main() {
+    let need = Need {
+        name: String::from(&quot;Export orders&quot;),
+        variant: Some(String::from(&quot;CSV&quot;)),
+    };
+
+    println!(&quot;{}&quot;, need.name);
+    println!(&quot;{:?}&quot;, need.variant);
+}</code></pre></figure>
+<p>The type definition says what fields exist. <code>Need { ... }</code> constructs a value; <code>need.name</code> accesses a field. <code>String</code> is an owned string value. <code>Option&lt;String&gt;</code> allows either an owned string or no value.</p>
+</section><section id="meaning"><h2>How do these fields relate to the product terms?</h2>
+<div class="table-wrap"><table><thead><tr><th>Rust field</th><th>Product meaning</th><th>Example</th></tr></thead><tbody><tr><td><code>Need.name</code></td><td>The model’s label for the underlying need.</td><td><code>Export orders</code></td></tr><tr><td><code>Need.variant</code></td><td>The particular requested behavior, if specified.</td><td><code>Some("CSV")</code></td></tr><tr><td><code>NeedReport.identity</code></td><td>The confirmed product-scoped identity, if a mapping exists when demand is calculated.</td><td><code>Some("export-orders")</code></td></tr></tbody></table></div>
+<p>There is no identity field in the classifier’s <code>Need</code> struct. The workflow looks up a confirmed mapping separately when calculating the report. The alias table calls <code>Need.name</code> a <code>label</code>; the different field names do not create two separate model values.</p>
+</section><section id="nested"><h2>Struct fields can contain other collections of values</h2>
+<figure data-kind="source" data-path="src/lib.rs" data-start="31" data-end="38"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L31-L38">src/lib.rs · lines 31–38</a> · exact source excerpt</figcaption><pre><code> 31  pub struct Classification {
+ 32      pub message_index: usize,
+ 33      pub needs: Vec&lt;Need&gt;,
+ 34  }
+ 35  #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+ 36  pub struct Classifications {
+ 37      pub classifications: Vec&lt;Classification&gt;,
+ 38  }</code></pre></figure>
+<p><code>Vec&lt;Need&gt;</code> is a growable list of <code>Need</code> values. A <code>Classification</code> has one message index and a list of needs. A message with no explicit feature request has an empty list. <code>Classifications</code> wraps the list returned by the model.</p>
+</section><section id="storage"><h2>A struct does not automatically create a table</h2>
+<p>These structs describe in-memory values. Serialization converts those values into a representation such as JSON. In the current implementation, feedback, classifications, and demand results are stored inside a report’s JSON column. Defining a <code>Need</code> struct does not create a <code>needs</code> SQL table.</p>
+<p>For the complete application path, see the <a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/docs/05-pr-walkthroughs/pr-1.html">PR walkthrough HTML at this source commit</a> on the implementation branch.</p>
+</section><div class="next"><a href="02-references-and-borrowing.html">← Shared and mutable references</a><a href="04-option-and-validation.html">Option and optional-value validation →</a></div></main><footer><p>Standalone examples are teaching examples, not application changes. Exact Ship Signal excerpts refer to the source commit above; their links open GitHub. Each lesson works offline without external styles, scripts, or images.</p></footer></body></html>

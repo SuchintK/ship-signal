@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Rust concepts · Option and optional-value validation</title><style>
+:root{color-scheme:dark;--bg:#101820;--panel:#192832;--ink:#edf4f6;--muted:#b5c8d1;--line:#36515e;--mint:#8be2c2;--blue:#a4d3ff;--amber:#f4d18f}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:20px}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.7 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header,main,footer{max-width:1020px;padding:36px 28px;margin:auto}header{padding-top:55px;padding-bottom:14px}.eyebrow{color:var(--mint);font-size:12px;font-weight:700;letter-spacing:.13em;text-transform:uppercase}h1{font-size:clamp(33px,5vw,53px);line-height:1.12;letter-spacing:-.03em;margin:18px 0}h2{font-size:27px;line-height:1.25;margin:0 0 18px}h3{font-size:21px;line-height:1.3;margin:25px 0 12px}.lede{font-size:21px;color:var(--muted);max-width:800px}a{color:var(--mint);text-underline-offset:4px}a:focus-visible{outline:3px solid var(--amber);outline-offset:4px}nav{display:flex;flex-wrap:wrap;gap:10px 20px;font-size:14px;border-block:1px solid var(--line);padding:19px 0;margin-top:26px}p{margin:12px 0 18px}section{margin-bottom:44px}code{font:.88em/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--blue);overflow-wrap:anywhere}figure{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0a131b;margin:20px 0}figcaption{padding:11px 17px;background:var(--panel);font-size:13px;color:var(--muted)}pre{margin:0;padding:20px;overflow-x:auto;line-height:1.6}pre code{color:#e0edf3;white-space:pre;overflow-wrap:normal}.note{border-left:4px solid var(--mint);background:var(--panel);border-radius:0 10px 10px 0;padding:17px 20px;margin:22px 0}.warning{border-left-color:var(--amber)}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:15px;margin:18px 0 24px}th,td{border-bottom:1px solid var(--line);text-align:left;vertical-align:top;padding:12px}th{background:var(--panel);color:var(--mint)}li{margin:8px 0}.caption,.meta{color:var(--muted);font-size:13px}.meta{overflow-wrap:anywhere}.next{display:flex;flex-wrap:wrap;gap:20px;justify-content:space-between;border-top:1px solid var(--line);padding-top:20px}footer{color:var(--muted);font-size:13px;padding-top:0}.badge{display:inline-block;border:1px solid var(--line);border-radius:18px;padding:2px 10px;color:var(--amber);font-size:12px;margin-bottom:10px}
+@media(max-width:650px){header,main,footer{padding-inline:18px}header{padding-top:32px}body{font-size:16px}h2{font-size:24px}th,td{padding:10px}pre{padding:15px}}
+@media print{body{color:#1e303a;background:white}header,main,footer{max-width:none;padding:15px}nav{display:none}.lede,.meta,.caption,footer{color:#485e69}code,a,.eyebrow{color:#14624d}figure{background:#f2f6f7;border-color:#aabcc4}figcaption,th,.note{background:#eaf2f3;color:#223c49}pre code{color:#152b37}pre{white-space:pre-wrap}pre code{white-space:pre-wrap}h2,h3{break-after:avoid}tr,figure{break-inside:avoid}}
+</style></head>
+<body><header><div class="eyebrow">Ship Signal / Rust concepts / 04</div><h1>Option and optional-value validation</h1><p class="lede">Understand Some, None, and why an optional string can still need validation.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>217ee8f20d7e561a25062331f99dc8fba99a1d59</code></p><nav aria-label="Lesson contents"><a href="#option">Option means a value may be absent</a><a href="#empty">Absent and present-but-empty are different</a><a href="#expression">Read the actual validation expression</a><a href="#different-fields">The meaning of None depends on the field</a></nav></header><main><section id="option"><h2>Option means a value may be absent</h2>
+<p><code>Option&lt;T&gt;</code> has two forms: <code>Some(value)</code> holds a value of type T, and <code>None</code> means there is no value. It makes absence explicit in the type.</p>
+<figure data-kind="run"><figcaption>Standalone Rust example</figcaption><pre><code>fn main() {
+    let csv: Option&lt;String&gt; = Some(String::from(&quot;CSV&quot;));
+    let unspecified: Option&lt;String&gt; = None;
+
+    match &amp;csv {
+        Some(value) =&gt; println!(&quot;Requested variant: {value}&quot;),
+        None =&gt; println!(&quot;No variant specified&quot;),
+    }
+    assert!(unspecified.is_none());
+}</code></pre></figure>
+<p>For the <code>Option</code> fields discussed here, JSON serialization represents <code>Some("CSV")</code> as <code>"CSV"</code> and <code>None</code> as <code>null</code>.</p>
+</section><section id="empty"><h2>Absent and present-but-empty are different</h2>
+<div class="table-wrap"><table><thead><tr><th>Rust value</th><th>What the type says</th><th>Ship Signal’s variant rule</th></tr></thead><tbody><tr><td><code>None</code></td><td>No variant was supplied.</td><td>Accepted.</td></tr><tr><td><code>Some(String::from("CSV"))</code></td><td>A string was supplied.</td><td>Accepted.</td></tr><tr><td><code>Some(String::from(""))</code></td><td>A string was supplied, but it is empty.</td><td>Rejected.</td></tr><tr><td><code>Some(String::from("   "))</code></td><td>A string was supplied, containing whitespace.</td><td>Rejected.</td></tr></tbody></table></div>
+<p><code>Option&lt;String&gt;</code> permits all four values at the type level. The application adds the nonblank-content rule. Optional does not mean that every present value is meaningful.</p>
+</section><section id="expression"><h2>Read the actual validation expression</h2>
+<figure data-kind="source" data-path="src/lib.rs" data-start="311" data-end="319"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L311-L319">src/lib.rs · lines 311–319</a> · exact source excerpt</figcaption><pre><code>311              for need in &amp;classification.needs {
+312                  ensure!(
+313                      !need.name.trim().is_empty(),
+314                      &quot;classifier returned an empty need name&quot;
+315                  );
+316                  ensure!(
+317                      need.variant.as_ref().is_none_or(|v| !v.trim().is_empty()),
+318                      &quot;classifier returned an empty variant&quot;
+319                  );</code></pre></figure>
+<p>The variant expression checks these steps:</p>
+<ol><li><code>as_ref()</code> borrows the value inside the option, producing <code>Option&lt;&amp;String&gt;</code>. The check does not take ownership of the original string.</li><li><code>is_none_or(...)</code> succeeds when the option is <code>None</code>, or when the supplied condition succeeds for a present value.</li><li><code>|v| !v.trim().is_empty()</code> is the condition: after ignoring leading and trailing whitespace, the string must contain something.</li></ol>
+<p><code>trim()</code> is used to inspect the value; this expression does not rewrite or normalize the saved string.</p>
+<figure data-kind="run"><figcaption>Standalone Rust example</figcaption><pre><code>fn valid_variant(variant: &amp;Option&lt;String&gt;) -&gt; bool {
+    variant.as_ref().is_none_or(|v| !v.trim().is_empty())
+}
+
+fn main() {
+    assert!(valid_variant(&amp;None));
+    assert!(valid_variant(&amp;Some(String::from(&quot;CSV&quot;))));
+    assert!(!valid_variant(&amp;Some(String::from(&quot;&quot;))));
+    assert!(!valid_variant(&amp;Some(String::from(&quot;   &quot;))));
+}</code></pre></figure>
+<div class="note"><strong>The check does not require a variant.</strong> It requires useful content only when a variant is supplied. If the condition is false, <code>ensure!</code> returns an error.</div>
+</section><section id="different-fields"><h2>The meaning of None depends on the field</h2>
+<p><code>Need.variant = None</code> means no requested variant was specified. <code>NeedReport.identity = None</code> means that group had no confirmed identity mapping when the report was calculated. These share the same optional-value mechanism but represent different product facts.</p>
+</section><div class="next"><a href="03-structs-and-fields.html">← Structs and fields</a><a href="05-results-and-errors.html">Result, error propagation, and ensure! →</a></div></main><footer><p>Standalone examples are teaching examples, not application changes. Exact Ship Signal excerpts refer to the source commit above; their links open GitHub. Each lesson works offline without external styles, scripts, or images.</p></footer></body></html>

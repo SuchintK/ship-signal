@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Rust concepts · Vectors, validation, and sorting</title><style>
+:root{color-scheme:dark;--bg:#101820;--panel:#192832;--ink:#edf4f6;--muted:#b5c8d1;--line:#36515e;--mint:#8be2c2;--blue:#a4d3ff;--amber:#f4d18f}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:20px}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.7 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header,main,footer{max-width:1020px;padding:36px 28px;margin:auto}header{padding-top:55px;padding-bottom:14px}.eyebrow{color:var(--mint);font-size:12px;font-weight:700;letter-spacing:.13em;text-transform:uppercase}h1{font-size:clamp(33px,5vw,53px);line-height:1.12;letter-spacing:-.03em;margin:18px 0}h2{font-size:27px;line-height:1.25;margin:0 0 18px}h3{font-size:21px;line-height:1.3;margin:25px 0 12px}.lede{font-size:21px;color:var(--muted);max-width:800px}a{color:var(--mint);text-underline-offset:4px}a:focus-visible{outline:3px solid var(--amber);outline-offset:4px}nav{display:flex;flex-wrap:wrap;gap:10px 20px;font-size:14px;border-block:1px solid var(--line);padding:19px 0;margin-top:26px}p{margin:12px 0 18px}section{margin-bottom:44px}code{font:.88em/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--blue);overflow-wrap:anywhere}figure{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0a131b;margin:20px 0}figcaption{padding:11px 17px;background:var(--panel);font-size:13px;color:var(--muted)}pre{margin:0;padding:20px;overflow-x:auto;line-height:1.6}pre code{color:#e0edf3;white-space:pre;overflow-wrap:normal}.note{border-left:4px solid var(--mint);background:var(--panel);border-radius:0 10px 10px 0;padding:17px 20px;margin:22px 0}.warning{border-left-color:var(--amber)}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:15px;margin:18px 0 24px}th,td{border-bottom:1px solid var(--line);text-align:left;vertical-align:top;padding:12px}th{background:var(--panel);color:var(--mint)}li{margin:8px 0}.caption,.meta{color:var(--muted);font-size:13px}.meta{overflow-wrap:anywhere}.next{display:flex;flex-wrap:wrap;gap:20px;justify-content:space-between;border-top:1px solid var(--line);padding-top:20px}footer{color:var(--muted);font-size:13px;padding-top:0}.badge{display:inline-block;border:1px solid var(--line);border-radius:18px;padding:2px 10px;color:var(--amber);font-size:12px;margin-bottom:10px}
+@media(max-width:650px){header,main,footer{padding-inline:18px}header{padding-top:32px}body{font-size:16px}h2{font-size:24px}th,td{padding:10px}pre{padding:15px}}
+@media print{body{color:#1e303a;background:white}header,main,footer{max-width:none;padding:15px}nav{display:none}.lede,.meta,.caption,footer{color:#485e69}code,a,.eyebrow{color:#14624d}figure{background:#f2f6f7;border-color:#aabcc4}figcaption,th,.note{background:#eaf2f3;color:#223c49}pre code{color:#152b37}pre{white-space:pre-wrap}pre code{white-space:pre-wrap}h2,h3{break-after:avoid}tr,figure{break-inside:avoid}}
+</style></head>
+<body><header><div class="eyebrow">Ship Signal / Rust concepts / 07</div><h1>Vectors, validation, and sorting</h1><p class="lede">Understand why sorting changes order, why length is checked first, and how message indices connect classifications to feedback.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>217ee8f20d7e561a25062331f99dc8fba99a1d59</code></p><nav aria-label="Lesson contents"><a href="#vector">A Vec is a growable list</a><a href="#order">Why check length before sorting?</a><a href="#example">The same length can still contain invalid indices</a><a href="#purpose">Why does this validation matter for demand?</a></nav></header><main><section id="vector"><h2>A Vec is a growable list</h2>
+<p><code>Vec&lt;T&gt;</code> stores a sequence of values of type T. <code>len()</code> reports the number of elements. Sorting changes their order; it does not merge duplicates or reduce the length.</p>
+<figure data-kind="run"><figcaption>Standalone Rust example</figcaption><pre><code>fn main() {
+    let mut indices = vec![2, 0, 1, 1];
+    let original_len = indices.len();
+
+    indices.sort();
+
+    assert_eq!(indices, vec![0, 1, 1, 2]);
+    assert_eq!(indices.len(), original_len); // still 4
+}</code></pre></figure>
+<p>A separate operation such as <code>dedup()</code> could remove adjacent duplicates, but Ship Signal does not use that to fix invalid classifier output. Duplicate message classifications should be rejected rather than silently removed.</p>
+</section><section id="order"><h2>Why check length before sorting?</h2>
+<figure data-kind="source" data-path="src/lib.rs" data-start="301" data-end="310"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L301-L310">src/lib.rs · lines 301–310</a> · exact source excerpt</figcaption><pre><code>301          ensure!(
+302              classifications.len() == input.feedback.len(),
+303              &quot;classifier must return one classification per message&quot;
+304          );
+305          classifications.sort_by_key(|c| c.message_index);
+306          for (i, classification) in classifications.iter().enumerate() {
+307              ensure!(
+308                  classification.message_index == i,
+309                  &quot;classifier returned missing, duplicate, or invalid message index&quot;
+310              );</code></pre></figure>
+<ol><li>Compare the number of classifications with the number of valid feedback messages. An immediate mismatch is already invalid, so stop before sorting.</li><li>Sort the classifications by <code>message_index</code>, because a valid model response may arrive out of order.</li><li>Compare each sorted index with its expected position: 0, 1, 2, and so on. This catches duplicate, missing, or out-of-range indices that a length check alone cannot detect.</li></ol>
+<p><code>sort_by_key(|c| c.message_index)</code> uses a closure to choose the sort key. <code>enumerate()</code> supplies the expected positions during iteration.</p>
+</section><section id="example"><h2>The same length can still contain invalid indices</h2>
+<div class="table-wrap"><table><thead><tr><th>Feedback count</th><th>Returned indices</th><th>After sorting</th><th>Result</th></tr></thead><tbody><tr><td>3</td><td><code>[2, 0, 1]</code></td><td><code>[0, 1, 2]</code></td><td>Accepted index structure.</td></tr><tr><td>3</td><td><code>[0, 1]</code></td><td>Not sorted: length fails first.</td><td>Rejected.</td></tr><tr><td>3</td><td><code>[0, 0, 2]</code></td><td><code>[0, 0, 2]</code></td><td>Rejected: position 1 has index 0.</td></tr><tr><td>3</td><td><code>[0, 1, 3]</code></td><td><code>[0, 1, 3]</code></td><td>Rejected: position 2 has index 3.</td></tr></tbody></table></div><figure data-kind="run"><figcaption>Standalone equivalent index-validation example</figcaption><pre><code>fn valid_indices(mut indices: Vec&lt;usize&gt;, feedback_count: usize) -&gt; bool {
+    if indices.len() != feedback_count {
+        return false;
+    }
+    indices.sort();
+    indices.iter().enumerate().all(|(i, index)| *index == i)
+}
+
+fn main() {
+    assert!(valid_indices(vec![2, 0, 1], 3));
+    assert!(!valid_indices(vec![0, 1], 3));
+    assert!(!valid_indices(vec![0, 0, 2], 3));
+    assert!(!valid_indices(vec![0, 1, 3], 3));
+}</code></pre></figure>
+<div class="note"><strong>Empty requests and missing classifications are different.</strong> A bug-only message still needs a classification with <code>needs: []</code>. The classifier must not omit that message’s classification entirely.</div>
+</section><section id="purpose"><h2>Why does this validation matter for demand?</h2>
+<p>After validation, the workflow pairs each feedback row with its classification using <code>zip</code>. The index checks establish that the sorted classification sequence lines up with the original feedback sequence. A matching length alone would not establish this.</p>
+<figure data-kind="source" data-path="src/lib.rs" data-start="330" data-end="338"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L330-L338">src/lib.rs · lines 330–338</a> · exact source excerpt</figcaption><pre><code>330          let mut products: BTreeMap&lt;String, ProductDemand&gt; = BTreeMap::new();
+331          for (row, classification) in input.feedback.iter().zip(&amp;classifications) {
+332              let product = products.entry(row.product_id.clone()).or_default();
+333              if !classification.needs.is_empty() {
+334                  if let Some(customer) = &amp;row.customer_id {
+335                      product.customers.insert(customer.clone());
+336                  }
+337              }
+338              for need in &amp;classification.needs {</code></pre></figure>
+<p>Demand deduplication is a different operation: customer sets count a person once per need. Sorting the classification vector does not perform customer deduplication.</p>
+</section><div class="next"><a href="06-functions-and-closures.html">← Functions, closures, and the classifier boundary</a><a href="README.md">Lesson index →</a></div></main><footer><p>Standalone examples are teaching examples, not application changes. Exact Ship Signal excerpts refer to the source commit above; their links open GitHub. Each lesson works offline without external styles, scripts, or images.</p></footer></body></html>
