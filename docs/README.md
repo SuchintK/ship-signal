@@ -12,5 +12,6 @@ Ship Signal turns recurring customer feature requests into evidence-backed ticke
 | [03 — Architecture decision records](03-adr/README.md) | Rationale, alternatives, and consequences for consequential architecture decisions. |
 | [04 — MVP specification](04-mvp-spec/README.md) | Published MVP spec ([SUC-17](https://linear.app/suchint/issue/SUC-17/ship-signal-mvp-feedback-to-draft-pr-workflow)), user stories, implementation constraints, confirmed testing boundary, and unresolved decisions. |
 | [05 — PR walkthroughs](05-pr-walkthroughs/README.md) | Standalone code walkthroughs for pull requests. |
+| [07 — Rust concepts](07-rust-concepts/README.md) | Beginner-friendly Rust explanations, with a separate HTML file for each concept as lessons are added. |
 
 The grill-session record captures the current agreed design. It is a product and design record, not a claim that the implementation exists. Items explicitly listed as unresolved remain open.
