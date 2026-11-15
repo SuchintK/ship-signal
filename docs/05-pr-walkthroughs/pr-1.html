@@ -3,12 +3,123 @@
 :root{color-scheme:dark;--bg:#0b1118;--panel:#111d29;--line:#2b3c4a;--ink:#e4edf3;--muted:#a9bac5;--accent:#75dec0;--amber:#f4c87b}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}.shell{max-width:1440px;margin:auto;display:grid;grid-template-columns:260px minmax(0,1fr)}aside{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line);padding:32px 24px}aside strong{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}nav{display:grid;gap:10px;margin-top:24px;font-size:14px}nav a{color:var(--muted)}main{min-width:0;padding:0 7% 80px}.hero{padding:74px 0 40px;border-bottom:1px solid var(--line)}.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.18em;color:var(--accent);font-weight:700}h1{font-size:clamp(34px,5vw,58px);letter-spacing:-.035em;line-height:1.06;margin:18px 0}h2{font-size:clamp(25px,3vw,34px);line-height:1.2;letter-spacing:-.02em;margin:0}h3{font-size:16px;margin:0 0 8px}.intro{font-size:19px;color:var(--muted);max-width:800px}.meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}.meta span,.pill{border:1px solid var(--line);padding:5px 10px;border-radius:6px;font-size:12px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}.pill{display:inline-block;color:var(--amber);border-color:#705b3a}section{padding-top:56px;scroll-margin-top:20px}.section-head{display:flex;align-items:baseline;gap:16px}.step{font:700 14px ui-monospace,monospace;color:var(--accent)}p{max-width:900px;color:#d3dfe6}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;color:#9fe6d1}figure{margin:22px 0;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#081018}figcaption{padding:10px 15px;background:#162532;color:#d3e4e9;font:12px ui-monospace,monospace}figcaption span{float:right;color:#8ca5b0}pre{margin:0;padding:18px;overflow:auto;line-height:1.55}pre code{color:#d5e4ec;font-size:12px;white-space:pre}.note{border-left:3px solid var(--accent);background:#122820;padding:14px 18px;color:#d5eae1;margin:24px 0}.flow{display:flex;flex-wrap:wrap;gap:8px;margin:30px 0}.flow a{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 13px;font-size:14px}.flow a:not(:last-child):after{content:' →';color:var(--muted)}.grid,.math{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:24px 0}.grid article,.math div{border:1px solid var(--line);border-radius:8px;padding:20px;background:var(--panel)}.grid p{margin:0;color:var(--muted);font-size:14px}.math span,.math small{display:block;color:var(--muted);font-size:13px}.math b{display:block;font-size:25px;color:var(--accent);margin:8px 0}footer{border-top:1px solid var(--line);margin-top:60px;padding-top:20px;color:var(--muted);font-size:13px}@media(max-width:800px){.shell{display:block}aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:20px}nav{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:12px}main{padding:0 20px 50px}.hero{padding-top:42px}.grid,.math{grid-template-columns:1fr}figcaption span{float:none;display:block;margin-top:5px}}
 
 table{width:100%;border-collapse:collapse;font-size:14px;margin:20px 0}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:12px}th{color:var(--accent);background:var(--panel)}.table-wrap{overflow-x:auto}td code{overflow-wrap:anywhere}h3{font-size:20px;margin:30px 0 12px;scroll-margin-top:22px}h4{font-size:16px;margin:23px 0 8px}li{margin:9px 0;color:#d3dfe6}.subnav{display:flex;flex-wrap:wrap;gap:8px 18px;margin:20px 0;font-size:14px}.caption{color:var(--muted);font-size:13px}.warning{border-left-color:var(--amber);background:#292318}blockquote{margin:20px 0;padding:12px 20px;border-left:3px solid var(--line);color:var(--muted)}a:focus-visible{outline:2px solid var(--amber);outline-offset:4px}.term{font-weight:700;color:var(--accent)}pre{tab-size:4}.compact{font-size:14px}.example{border-color:#557e73}details{margin:20px 0;border:1px solid var(--line);border-radius:8px;padding:14px 18px}summary{cursor:pointer;color:var(--accent)}
+
+aside nav{display:block}.toc,.toc-sub{list-style:none;padding:0;margin:0;display:grid}.toc{gap:18px}.toc li,.toc-sub li{margin:0}.toc>li>a{display:block;color:var(--ink);font-weight:650;line-height:1.45}.toc-sub{gap:8px;margin:9px 0 0 7px;padding-left:12px;border-left:1px solid var(--line)}.toc-sub a{display:block;font-size:12px;line-height:1.5}.toc-sub .toc-sub{margin-top:7px;padding-left:10px}.toc-sub .toc-sub a{font-size:11px}h4[id]{scroll-margin-top:22px}
+@media(max-width:800px){aside nav{display:block}.toc{grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 18px}}
+@media(max-width:480px){.toc{grid-template-columns:1fr}}
 @media print{.shell{display:block}aside{display:none}body{background:white;color:#18242c}main{padding:15px}.hero{padding-top:15px}p,li{color:#243743}h1,h2,h3,h4{color:#18242c}.intro,.caption{color:#42535d}pre{white-space:pre-wrap;background:#f0f4f6}pre code{white-space:pre-wrap;color:#142b35}figure,.grid article,.math div{background:#f0f4f6;border-color:#9baeb8}.note{background:#edf6f1;color:#243743}th,figcaption{background:#e5eef0;color:#213a43}a,code,.step,.eyebrow{color:#14684f}figure,tr{break-inside:avoid}h2,h3,h4{break-after:avoid}.meta span{color:#42535d}}
 </style></head>
-<body><div class="shell"><aside><strong>Ship Signal / PR 01</strong><nav aria-label="Walkthrough contents"><a href="#overview">01 · Complete workflow</a><a href="#start">02 · CLI &amp; shared workflow</a><a href="#source">03 · PostgreSQL feedback</a><a href="#classify">04 · Classification</a><a href="#demand">05 · Identity &amp; demand</a><a href="#save">06 · Save &amp; load reports</a><a href="#review">07 · Human review</a><a href="#example">08 · Worked example</a><a href="#tests">09 · Checks &amp; future scope</a></nav></aside><main>
+<body><div class="shell"><aside><strong>Ship Signal / PR 01</strong><nav aria-label="Walkthrough contents">
+<ul class="toc">
+<li><a href="#overview">01 · Complete workflow</a>
+</li>
+<li><a href="#start">02 · CLI &amp; shared workflow</a>
+<ul class="toc-sub">
+<li><a href="#shared-workflow">What is shared analysis behavior?</a>
+</li>
+<li><a href="#state-file">How do installations select their SQLite database?</a>
+</li>
+</ul>
+</li>
+<li><a href="#source">03 · PostgreSQL feedback</a>
+<ul class="toc-sub">
+<li><a href="#utc-confirmation">What does the UTC flag confirm?</a>
+</li>
+<li><a href="#source-validation">Read the interval and exclude invalid rows</a>
+</li>
+<li><a href="#diagnostics">Diagnostics versus candidates</a>
+</li>
+</ul>
+</li>
+<li><a href="#classify">04 · Classification</a>
+<ul class="toc-sub">
+<li><a href="#explicit-requests">Explicit requests, underlying needs, and variants</a>
+</li>
+<li><a href="#classifier-call">Where does the real classifier run?</a>
+</li>
+<li><a href="#classification-validation">Why check length before sorting? Why validate an optional variant?</a>
+</li>
+</ul>
+</li>
+<li><a href="#demand">05 · Identity &amp; demand</a>
+<ul class="toc-sub">
+<li><a href="#mapping">What is a confirmed mapping?</a>
+</li>
+<li><a href="#identity-lookup">Does Analyze assign an identity?</a>
+</li>
+<li><a href="#demand-math">What are demand results?</a>
+</li>
+</ul>
+</li>
+<li><a href="#save">06 · Save &amp; load reports</a>
+<ul class="toc-sub">
+<li><a href="#report-storage">Where do the values live?</a>
+</li>
+<li><a href="#single-insert">Why is the report ID outside the stored JSON?</a>
+</li>
+<li><a href="#load-report">What does loading a report later mean?</a>
+</li>
+</ul>
+</li>
+<li><a href="#review">07 · Human review</a>
+<ul class="toc-sub">
+<li><a href="#first-review">7.1 · What if no identity exists yet?</a>
+</li>
+<li><a href="#review-candidates">7.2 · Where do existing candidates come from?</a>
+</li>
+<li><a href="#suggestions">7.3 · How does the model suggest a match?</a>
+<ul class="toc-sub">
+<li><a href="#suggestion-validation">Validate before showing the choice</a>
+</li>
+</ul>
+</li>
+<li><a href="#confirm">7.4 · A person establishes the mapping</a>
+</li>
+<li><a href="#deferrals">7.5 · Why save deferrals? What does “resume” mean?</a>
+</li>
+<li><a href="#review-result">7.6 · Save a separate reviewed report</a>
+</li>
+</ul>
+</li>
+<li><a href="#example">08 · Worked example</a>
+<ul class="toc-sub">
+<li><a href="#example-initial">8.1 · Analyze saves initial report 1</a>
+</li>
+<li><a href="#example-review">8.2 · Run review-needs for report 1</a>
+</li>
+<li><a href="#example-reviewed">8.3 · Completion saves report 2, reviewed_from 1</a>
+</li>
+<li><a href="#example-next">8.4 · A later analysis can reuse earlier decisions</a>
+</li>
+</ul>
+</li>
+<li><a href="#tests">09 · Checks &amp; future scope</a>
+<ul class="toc-sub">
+<li><a href="#observed-checks">Observed checks at the analyzed source</a>
+<ul class="toc-sub">
+<li><a href="#checks-workflow">Workflow · 14 tests</a>
+</li>
+<li><a href="#checks-cli">CLI · 1 test</a>
+</li>
+<li><a href="#checks-postgresql">PostgreSQL · 4 tests</a>
+</li>
+<li><a href="#checks-formatting">Formatting</a>
+</li>
+</ul>
+</li>
+<li><a href="#limits">Implementation limits</a>
+</li>
+<li><a href="#future-id">Deferred idea: suggest the text of a new ID</a>
+</li>
+<li><a href="#further-reading">Where to go next</a>
+</li>
+</ul>
+</li>
+</ul>
+</nav></aside><main>
 <header class="hero"><div class="eyebrow">Code walkthrough · PR #1</div><h1>From feedback<br>to reviewed demand.</h1><p class="intro">Follow the data from a PostgreSQL message to a saved report, a human-confirmed need identity, and a separately reviewed demand result.</p>
-<div class="meta"><span>Analyzed source SHA: fbacef155778d01b0f69894c5ab91d72bb920ff6</span><span>Base SHA: 6b237b0800b94b5e71c5a0bb5ff5b674b0b5f201</span></div>
-<p><strong>Before:</strong> the base contains product design documentation and a Rust-concepts entry point, but no Rust feedback-analysis application. <strong>After:</strong> this branch adds the CLI, PostgreSQL connector, SQLite reports, and model-assisted identity review. This walkthrough describes the exact source commit above; its own generated artifact is excluded from the code analysis.</p></header>
+<div class="meta"><span>Analyzed source SHA: 48f36a463768fdd4a6f3bb07c68995f14380e45d</span><span>Base SHA: 76361d9c8782ee90b59e2f7c286f0f887368e9ac</span></div>
+<p><strong>Before:</strong> the base contains product design and Rust-concepts documentation, but no Rust feedback-analysis application. <strong>After:</strong> this branch adds the CLI, PostgreSQL connector, SQLite reports, and model-assisted identity review. This walkthrough describes the exact source commit above; its own generated artifact is excluded from the code analysis.</p></header>
 <section id="overview"><div class="section-head"><span class="step">01</span><h2>Start here: the complete workflow</h2></div>
 <p>Ship Signal reads customer feedback, identifies explicit feature requests, measures demand, and lets a person decide which labels describe the same underlying need. This PR implements that analysis and identity-review slice. It does not implement the whole feedback-to-ticket-to-PR product.</p>
 <div class="flow" aria-label="Execution flow"><a href="#source">Read feedback</a><a href="#classify">Classify</a><a href="#demand">Calculate demand</a><a href="#save">Save report</a><a href="#review">Review unresolved needs</a><a href="#review-result">Save reviewed report</a></div>
@@ -351,7 +462,7 @@ cargo run -- report --state /data/fitness/ship-signal.sqlite 1</code></pre></fig
   &quot;reason&quot;: &quot;Downloading orders as CSV matches the existing order export need.&quot;
 }</code></pre></figure>
 <p>There is no numerical similarity formula or embedding search in this code. The model judges meaning from the supplied label, messages, variants, and candidate IDs/labels. This is a suggestion that may be wrong, not a proof of equivalence.</p>
-<h4>Validate before showing the choice</h4>
+<h4 id="suggestion-validation">Validate before showing the choice</h4>
 <figure data-source="src/need_review.rs" data-start="75" data-end="95"><figcaption>src/need_review.rs · lines 75–95 <span>exact source excerpt</span></figcaption><pre><code> 75          for original in queue {
  76              // Refresh candidates after each decision, including newly created identities.
  77              let Some(item) = self.need_review_queue(id)?.into_iter().find(|item| {
@@ -514,7 +625,7 @@ cargo run -- review-needs --state ./ship-signal.sqlite --report 1 --include-defe
 <p>An exact <code>Export orders</code> label for <code>demo-shop</code> automatically reuses <code>export-orders</code>. A previously unseen label such as <code>Download orders</code> still starts with <code>identity: null</code>. During its review, the current alias table supplies <code>export-orders</code> as a candidate, even though the new report does not contain that identity for the unresolved label yet.</p>
 </section><section id="tests"><div class="section-head"><span class="step">09</span><h2>Tests, limitations, and future scope</h2></div>
 <h3 id="observed-checks">Observed checks at the analyzed source</h3>
-<div class="grid"><article><h4>Workflow · 14 tests</h4><p><code>tests/workflow.rs</code> uses temporary SQLite files and controlled classifications. It covers distinct counts and the threshold, product-scoped identities, corrections, original-report preservation, queue candidates, invalid suggestions, quit/resume, deferrals, legacy IDs, and saving without report updates.</p></article><article><h4>CLI · 1 test</h4><p><code>tests/review_cli.rs</code> runs the actual review command through Rig against a controlled HTTP response, verifies the suggested match appears, and confirms it is saved after human input.</p></article><article><h4>PostgreSQL · 4 tests</h4><p><code>tests/postgres.rs</code> reads real fixture views, checks half-open boundaries and invalid/duplicate exclusions, saves a report, validates non-UTC conversion, and checks the fixture account’s write privileges. These tests are ignored by default and were run explicitly.</p></article><article><h4>Formatting</h4><p><code>cargo fmt --check</code> passed. The walkthrough’s source excerpts, links, anchors, and illustrative data are checked separately from the application tests.</p></article></div>
+<div class="grid"><article><h4 id="checks-workflow">Workflow · 14 tests</h4><p><code>tests/workflow.rs</code> uses temporary SQLite files and controlled classifications. It covers distinct counts and the threshold, product-scoped identities, corrections, original-report preservation, queue candidates, invalid suggestions, quit/resume, deferrals, legacy IDs, and saving without report updates.</p></article><article><h4 id="checks-cli">CLI · 1 test</h4><p><code>tests/review_cli.rs</code> runs the actual review command through Rig against a controlled HTTP response, verifies the suggested match appears, and confirms it is saved after human input.</p></article><article><h4 id="checks-postgresql">PostgreSQL · 4 tests</h4><p><code>tests/postgres.rs</code> reads real fixture views, checks half-open boundaries and invalid/duplicate exclusions, saves a report, validates non-UTC conversion, and checks the fixture account’s write privileges. These tests are ignored by default and were run explicitly.</p></article><article><h4 id="checks-formatting">Formatting</h4><p><code>cargo fmt --check</code> passed. The walkthrough’s source excerpts, links, anchors, and illustrative data are checked separately from the application tests.</p></article></div>
 <div class="note"><strong>Observed:</strong> <code>cargo test</code> passed 14 workflow tests and 1 CLI test. A separate <code>cargo test --test postgres -- --ignored</code> run against the synthetic fixture passed all 4 connector tests. No live model was exercised; these checks do not establish semantic accuracy or pilot usefulness.</div>
 <h3 id="limits">Implementation limits</h3>
 <ul><li>Labels can vary or be classified incorrectly. Model matching is advisory, and representative model qualification remains necessary.</li><li>The review queue is a terminal interaction reconstructed from saved evidence and current mappings. There is no separate queue table, saved suggestion history, or reviewer-actor audit log.</li><li>The current state schema initializes tables with <code>CREATE TABLE IF NOT EXISTS</code>; a versioned migration framework, retention cleanup, and explicit WAL/coordination configuration are not implemented here.</li><li>Scheduling, MySQL, ticket investigation, approval handling, implementation execution, and the historical source-rerun/comparison workflow remain outside this implemented slice.</li><li>Sample PostgreSQL messages are synthetic, not real customer pilot evidence. A confirmed need identity does not prove equivalent ticket scope or establish the similar-feature cooldown policy.</li></ul>
@@ -522,7 +633,7 @@ cargo run -- review-needs --state ./ship-signal.sqlite --report 1 --include-defe
 <p>An optional future improvement is to let the model propose a new ID such as <code>export-orders</code> and let the person accept or edit it before saving. It would need nonblank and same-product collision checks. This has not been implemented or committed as an implementation requirement: current new/uncertain suggestions must contain no identity, and the person types a new ID.</p>
 <p>The <a href="../01-grill-session/README.md#future-scope">product design’s Future scope section</a> is the home for deferred ideas. Unresolved design decisions are tracked separately in the technical decisions document.</p>
 <h3 id="further-reading">Where to go next</h3>
-<ul><li><a href="../07-rust-concepts/README.md">Rust concepts</a> — separate concept lessons will be added as individual HTML files; no lessons are present at this source commit.</li><li><a href="../../README.md">Repository README</a> — current command setup, model configuration, feedback contract, and synthetic PostgreSQL fixture instructions.</li><li><a href="../03-adr/0003-use-sqlite-for-single-host-mvp-state.md">ADR-0003</a> — accepted SQLite and single-host deployment boundary.</li><li><a href="../03-adr/0005-preserve-weekly-feedback-evidence-and-require-explicit-historical-corrections.md">ADR-0005</a> — saved evidence and explicit historical correction policy.</li><li><a href="../02-technical-decisions/README.md">Technical decisions</a> and <a href="../04-mvp-spec/README.md">MVP specification</a> — wider product requirements and open decisions.</li></ul>
+<ul><li><a href="../07-rust-concepts/README.md">Rust concepts</a> — seven separate HTML lessons cover bindings, references, structs, optional values, errors, closures, and vectors.</li><li><a href="../../README.md">Repository README</a> — current command setup, model configuration, feedback contract, and synthetic PostgreSQL fixture instructions.</li><li><a href="../03-adr/0003-use-sqlite-for-single-host-mvp-state.md">ADR-0003</a> — accepted SQLite and single-host deployment boundary.</li><li><a href="../03-adr/0005-preserve-weekly-feedback-evidence-and-require-explicit-historical-corrections.md">ADR-0005</a> — saved evidence and explicit historical correction policy.</li><li><a href="../02-technical-decisions/README.md">Technical decisions</a> and <a href="../04-mvp-spec/README.md">MVP specification</a> — wider product requirements and open decisions.</li></ul>
 </section>
 <footer>PR #1 · Offline walkthrough of the source SHA above. Later source changes can make excerpts and behavior stale. All example messages, choices, and model outputs are illustrative unless explicitly described as observed checks.</footer>
 </main></div></body></html>
