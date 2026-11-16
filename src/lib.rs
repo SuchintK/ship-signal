@@ -311,6 +311,8 @@ impl Workflow {
             rows.collect::<rusqlite::Result<_>>()?
         };
         let mut products: BTreeMap<String, ProductDemand> = BTreeMap::new();
+        // zip doesn't match using message_index. That is why the earlier code first sorts
+        // classifications by index and validates their count and indices.
         for (row, classification) in input.feedback.iter().zip(&classifications) {
             let product = products.entry(row.product_id.clone()).or_default();
             if !classification.needs.is_empty() {
