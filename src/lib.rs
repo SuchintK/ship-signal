@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
 use schemars::JsonSchema;
@@ -67,7 +67,6 @@ pub struct NeedReviewItem {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NeedReport {
     pub need: String,
-    #[serde(default)]
     pub identity: Option<String>,
     pub customer_count: usize,
     pub percentage: f64,
@@ -79,18 +78,12 @@ pub struct NeedReport {
 pub struct ProductReport {
     pub product_id: String,
     pub denominator: usize,
-    #[serde(default = "review_required_for_legacy_report")]
     pub needs_identity_review: bool,
     pub needs: Vec<NeedReport>,
 }
-fn review_required_for_legacy_report() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Report {
     pub id: i64,
-    #[serde(default)]
     pub reviewed_from: Option<i64>,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
@@ -99,12 +92,9 @@ pub struct Report {
     pub products: Vec<ProductReport>,
 }
 
-// The row's primary key is the report ID; older rows may also have it in the JSON.
+// The row's primary key is the report ID; it is not duplicated in the JSON.
 #[derive(Serialize, Deserialize)]
 struct StoredReport {
-    #[serde(default, rename = "id", skip_serializing)]
-    legacy_id: Option<i64>,
-    #[serde(default)]
     reviewed_from: Option<i64>,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
@@ -114,11 +104,8 @@ struct StoredReport {
 }
 
 impl StoredReport {
-    fn into_report(self, id: i64) -> Result<Report> {
-        if self.legacy_id.is_some_and(|legacy_id| legacy_id != id) {
-            bail!("stored report ID does not match");
-        }
-        Ok(Report {
+    fn into_report(self, id: i64) -> Report {
+        Report {
             id,
             reviewed_from: self.reviewed_from,
             start: self.start,
@@ -126,7 +113,7 @@ impl StoredReport {
             input: self.input,
             classifications: self.classifications,
             products: self.products,
-        })
+        }
     }
 }
 
@@ -390,7 +377,6 @@ impl Workflow {
             })
             .collect();
         let report = StoredReport {
-            legacy_id: None,
             reviewed_from,
             start,
             end,
@@ -404,7 +390,7 @@ impl Workflow {
             params![json],
             |row| row.get(0),
         )?;
-        report.into_report(id)
+        Ok(report.into_report(id))
     }
     pub fn report(&self, id: i64) -> Result<Report> {
         let json: String = self
@@ -416,6 +402,6 @@ impl Workflow {
             )
             .context("report not found")?;
         let report: StoredReport = serde_json::from_str(&json)?;
-        report.into_report(id)
+        Ok(report.into_report(id))
     }
 }
