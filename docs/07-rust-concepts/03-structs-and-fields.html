@@ -4,31 +4,31 @@
 @media(max-width:650px){header,main,footer{padding-inline:18px}header{padding-top:32px}body{font-size:16px}h2{font-size:24px}th,td{padding:10px}pre{padding:15px}}
 @media print{body{color:#1e303a;background:white}header,main,footer{max-width:none;padding:15px}nav{display:none}.lede,.meta,.caption,footer{color:#485e69}code,a,.eyebrow{color:#14624d}figure{background:#f2f6f7;border-color:#aabcc4}figcaption,th,.note{background:#eaf2f3;color:#223c49}pre code{color:#152b37}pre{white-space:pre-wrap}pre code{white-space:pre-wrap}h2,h3{break-after:avoid}tr,figure{break-inside:avoid}}
 </style></head>
-<body><header><div class="eyebrow">Ship Signal / Rust concepts / 03</div><h1>Structs and fields</h1><p class="lede">Read the named pieces of a Rust value, and distinguish an in-memory type from a database table.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>217ee8f20d7e561a25062331f99dc8fba99a1d59</code></p><nav aria-label="Lesson contents"><a href="#shape">A struct groups related named fields</a><a href="#meaning">How do these fields relate to the product terms?</a><a href="#nested">Struct fields can contain other collections of values</a><a href="#storage">A struct does not automatically create a table</a></nav></header><main><section id="shape"><h2>A struct groups related named fields</h2>
-<p>A struct defines a type with named fields. Ship Signal’s <code>Need</code> keeps a need’s name and optional requested variant together.</p>
-<figure data-kind="source" data-path="src/lib.rs" data-start="26" data-end="29"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L26-L29">src/lib.rs · lines 26–29</a> · exact source excerpt</figcaption><pre><code> 26  pub struct Need {
- 27      pub name: String,
+<body><header><div class="eyebrow">Ship Signal / Rust concepts / 03</div><h1>Structs and fields</h1><p class="lede">Read the named pieces of a Rust value, and distinguish an in-memory type from a database table.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>50afb3efaaa06c2b1c6eb64cc98d5ef41f516213</code></p><nav aria-label="Lesson contents"><a href="#shape">A struct groups related named fields</a><a href="#meaning">How do these fields relate to the product terms?</a><a href="#nested">Struct fields can contain other collections of values</a><a href="#storage">A struct does not automatically create a table</a></nav></header><main><section id="shape"><h2>A struct groups related named fields</h2>
+<p>A struct defines a type with named fields. Ship Signal’s <code>Need</code> keeps a need’s text and optional requested variant together.</p>
+<figure data-kind="source" data-path="src/lib.rs" data-start="26" data-end="29"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/50afb3efaaa06c2b1c6eb64cc98d5ef41f516213/src/lib.rs#L26-L29">src/lib.rs · lines 26–29</a> · exact source excerpt</figcaption><pre><code> 26  pub struct Need {
+ 27      pub need: String,
  28      pub variant: Option&lt;String&gt;,
  29  }</code></pre></figure><figure data-kind="run"><figcaption>Standalone simplified Need example</figcaption><pre><code>struct Need {
-    name: String,
+    need: String,
     variant: Option&lt;String&gt;,
 }
 
 fn main() {
-    let need = Need {
-        name: String::from(&quot;Export orders&quot;),
+    let request = Need {
+        need: String::from(&quot;Export orders&quot;),
         variant: Some(String::from(&quot;CSV&quot;)),
     };
 
-    println!(&quot;{}&quot;, need.name);
-    println!(&quot;{:?}&quot;, need.variant);
+    println!(&quot;{}&quot;, request.need);
+    println!(&quot;{:?}&quot;, request.variant);
 }</code></pre></figure>
-<p>The type definition says what fields exist. <code>Need { ... }</code> constructs a value; <code>need.name</code> accesses a field. <code>String</code> is an owned string value. <code>Option&lt;String&gt;</code> allows either an owned string or no value.</p>
+<p>The type definition says what fields exist. <code>Need { ... }</code> constructs a value; <code>request.need</code> accesses a field. <code>String</code> is an owned string value. <code>Option&lt;String&gt;</code> allows either an owned string or no value.</p>
 </section><section id="meaning"><h2>How do these fields relate to the product terms?</h2>
-<div class="table-wrap"><table><thead><tr><th>Rust field</th><th>Product meaning</th><th>Example</th></tr></thead><tbody><tr><td><code>Need.name</code></td><td>The model’s label for the underlying need.</td><td><code>Export orders</code></td></tr><tr><td><code>Need.variant</code></td><td>The particular requested behavior, if specified.</td><td><code>Some("CSV")</code></td></tr><tr><td><code>NeedReport.identity</code></td><td>The confirmed product-scoped identity, if a mapping exists when demand is calculated.</td><td><code>Some("export-orders")</code></td></tr></tbody></table></div>
-<p>There is no identity field in the classifier’s <code>Need</code> struct. The workflow looks up a confirmed mapping separately when calculating the report. The alias table calls <code>Need.name</code> a <code>label</code>; the different field names do not create two separate model values.</p>
+<div class="table-wrap"><table><thead><tr><th>Rust field</th><th>Product meaning</th><th>Example</th></tr></thead><tbody><tr><td><code>Need.need</code></td><td>The human-readable underlying customer goal.</td><td><code>Export orders</code></td></tr><tr><td><code>Need.variant</code></td><td>The particular requested behavior, if specified.</td><td><code>Some("CSV")</code></td></tr><tr><td><code>NeedReport.identity</code></td><td>The confirmed product-scoped identity, if a mapping exists when demand is calculated.</td><td><code>Some("export-orders")</code></td></tr></tbody></table></div>
+<p>There is no identity field in the classifier’s <code>Need</code> struct. The workflow looks up a confirmed mapping separately when calculating the report. The classifier, reports, review items, and mapping table all use the <code>need</code> field for this text.</p>
 </section><section id="nested"><h2>Struct fields can contain other collections of values</h2>
-<figure data-kind="source" data-path="src/lib.rs" data-start="31" data-end="38"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L31-L38">src/lib.rs · lines 31–38</a> · exact source excerpt</figcaption><pre><code> 31  pub struct Classification {
+<figure data-kind="source" data-path="src/lib.rs" data-start="31" data-end="38"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/50afb3efaaa06c2b1c6eb64cc98d5ef41f516213/src/lib.rs#L31-L38">src/lib.rs · lines 31–38</a> · exact source excerpt</figcaption><pre><code> 31  pub struct Classification {
  32      pub message_index: usize,
  33      pub needs: Vec&lt;Need&gt;,
  34  }
@@ -39,5 +39,5 @@ fn main() {
 <p><code>Vec&lt;Need&gt;</code> is a growable list of <code>Need</code> values. A <code>Classification</code> has one message index and a list of needs. A message with no explicit feature request has an empty list. <code>Classifications</code> wraps the list returned by the model.</p>
 </section><section id="storage"><h2>A struct does not automatically create a table</h2>
 <p>These structs describe in-memory values. Serialization converts those values into a representation such as JSON. In the current implementation, feedback, classifications, and demand results are stored inside a report’s JSON column. Defining a <code>Need</code> struct does not create a <code>needs</code> SQL table.</p>
-<p>For the complete application path, see the <a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/docs/05-pr-walkthroughs/pr-1.html">PR walkthrough HTML at this source commit</a> on the implementation branch.</p>
+<p>For the complete application path, see the <a href="https://github.com/SuchintK/ship-signal/blob/50afb3efaaa06c2b1c6eb64cc98d5ef41f516213/docs/05-pr-walkthroughs/pr-1.html">PR walkthrough HTML</a> on the implementation branch.</p>
 </section><div class="next"><a href="02-references-and-borrowing.html">← Shared and mutable references</a><a href="04-option-and-validation.html">Option and optional-value validation →</a></div></main><footer><p>Standalone examples are teaching examples, not application changes. Exact Ship Signal excerpts refer to the source commit above; their links open GitHub. Each lesson works offline without external styles, scripts, or images.</p></footer></body></html>

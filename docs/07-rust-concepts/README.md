@@ -16,6 +16,6 @@ Read in order, or jump to the concept you need.
 | 06 | [Functions, closures, and the classifier boundary](06-functions-and-closures.html) | See how the CLI supplies model behavior while Workflow keeps orchestration and counting in one place. |
 | 07 | [Vectors, validation, and sorting](07-vectors-validation-and-sorting.html) | Understand why sorting changes order, why length is checked first, and how message indices connect classifications to feedback. |
 
-Ship Signal source excerpts are pinned to commit `217ee8f20d7e561a25062331f99dc8fba99a1d59`. Links to those excerpts open GitHub, so the lessons can also be read from `main` before the implementation branch is merged.
+Ship Signal source excerpts are pinned to commit `50afb3efaaa06c2b1c6eb64cc98d5ef41f516213`. Links to those excerpts open GitHub, so the lessons can also be read from `main` before the implementation branch is merged.
 
 Add future concepts as separate HTML files in this folder and link them in this index. Each explanation should introduce the concept, show a small Rust example, and connect it to Ship Signal where useful.

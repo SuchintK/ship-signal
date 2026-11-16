@@ -4,7 +4,7 @@
 @media(max-width:650px){header,main,footer{padding-inline:18px}header{padding-top:32px}body{font-size:16px}h2{font-size:24px}th,td{padding:10px}pre{padding:15px}}
 @media print{body{color:#1e303a;background:white}header,main,footer{max-width:none;padding:15px}nav{display:none}.lede,.meta,.caption,footer{color:#485e69}code,a,.eyebrow{color:#14624d}figure{background:#f2f6f7;border-color:#aabcc4}figcaption,th,.note{background:#eaf2f3;color:#223c49}pre code{color:#152b37}pre{white-space:pre-wrap}pre code{white-space:pre-wrap}h2,h3{break-after:avoid}tr,figure{break-inside:avoid}}
 </style></head>
-<body><header><div class="eyebrow">Ship Signal / Rust concepts / 07</div><h1>Vectors, validation, and sorting</h1><p class="lede">Understand why sorting changes order, why length is checked first, and how message indices connect classifications to feedback.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>217ee8f20d7e561a25062331f99dc8fba99a1d59</code></p><nav aria-label="Lesson contents"><a href="#vector">A Vec is a growable list</a><a href="#order">Why check length before sorting?</a><a href="#example">The same length can still contain invalid indices</a><a href="#purpose">Why does this validation matter for demand?</a></nav></header><main><section id="vector"><h2>A Vec is a growable list</h2>
+<body><header><div class="eyebrow">Ship Signal / Rust concepts / 07</div><h1>Vectors, validation, and sorting</h1><p class="lede">Understand why sorting changes order, why length is checked first, and how message indices connect classifications to feedback.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>50afb3efaaa06c2b1c6eb64cc98d5ef41f516213</code></p><nav aria-label="Lesson contents"><a href="#vector">A Vec is a growable list</a><a href="#order">Why check length before sorting?</a><a href="#example">The same length can still contain invalid indices</a><a href="#purpose">Why does this validation matter for demand?</a></nav></header><main><section id="vector"><h2>A Vec is a growable list</h2>
 <p><code>Vec&lt;T&gt;</code> stores a sequence of values of type T. <code>len()</code> reports the number of elements. Sorting changes their order; it does not merge duplicates or reduce the length.</p>
 <figure data-kind="run"><figcaption>Standalone Rust example</figcaption><pre><code>fn main() {
     let mut indices = vec![2, 0, 1, 1];
@@ -17,16 +17,16 @@
 }</code></pre></figure>
 <p>A separate operation such as <code>dedup()</code> could remove adjacent duplicates, but Ship Signal does not use that to fix invalid classifier output. Duplicate message classifications should be rejected rather than silently removed.</p>
 </section><section id="order"><h2>Why check length before sorting?</h2>
-<figure data-kind="source" data-path="src/lib.rs" data-start="301" data-end="310"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L301-L310">src/lib.rs · lines 301–310</a> · exact source excerpt</figcaption><pre><code>301          ensure!(
-302              classifications.len() == input.feedback.len(),
-303              &quot;classifier must return one classification per message&quot;
-304          );
-305          classifications.sort_by_key(|c| c.message_index);
-306          for (i, classification) in classifications.iter().enumerate() {
-307              ensure!(
-308                  classification.message_index == i,
-309                  &quot;classifier returned missing, duplicate, or invalid message index&quot;
-310              );</code></pre></figure>
+<figure data-kind="source" data-path="src/lib.rs" data-start="294" data-end="303"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/50afb3efaaa06c2b1c6eb64cc98d5ef41f516213/src/lib.rs#L294-L303">src/lib.rs · lines 294–303</a> · exact source excerpt</figcaption><pre><code>294          ensure!(
+295              classifications.len() == input.feedback.len(),
+296              &quot;classifier must return one classification per message&quot;
+297          );
+298          classifications.sort_by_key(|c| c.message_index);
+299          for (i, classification) in classifications.iter().enumerate() {
+300              ensure!(
+301                  classification.message_index == i,
+302                  &quot;classifier returned missing, duplicate, or invalid message index&quot;
+303              );</code></pre></figure>
 <ol><li>Compare the number of classifications with the number of valid feedback messages. An immediate mismatch is already invalid, so stop before sorting.</li><li>Sort the classifications by <code>message_index</code>, because a valid model response may arrive out of order.</li><li>Compare each sorted index with its expected position: 0, 1, 2, and so on. This catches duplicate, missing, or out-of-range indices that a length check alone cannot detect.</li></ol>
 <p><code>sort_by_key(|c| c.message_index)</code> uses a closure to choose the sort key. <code>enumerate()</code> supplies the expected positions during iteration.</p>
 </section><section id="example"><h2>The same length can still contain invalid indices</h2>
@@ -47,14 +47,15 @@ fn main() {
 <div class="note"><strong>Empty requests and missing classifications are different.</strong> A bug-only message still needs a classification with <code>needs: []</code>. The classifier must not omit that message’s classification entirely.</div>
 </section><section id="purpose"><h2>Why does this validation matter for demand?</h2>
 <p>After validation, the workflow pairs each feedback row with its classification using <code>zip</code>. The index checks establish that the sorted classification sequence lines up with the original feedback sequence. A matching length alone would not establish this.</p>
-<figure data-kind="source" data-path="src/lib.rs" data-start="330" data-end="338"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L330-L338">src/lib.rs · lines 330–338</a> · exact source excerpt</figcaption><pre><code>330          let mut products: BTreeMap&lt;String, ProductDemand&gt; = BTreeMap::new();
-331          for (row, classification) in input.feedback.iter().zip(&amp;classifications) {
-332              let product = products.entry(row.product_id.clone()).or_default();
-333              if !classification.needs.is_empty() {
-334                  if let Some(customer) = &amp;row.customer_id {
-335                      product.customers.insert(customer.clone());
-336                  }
-337              }
-338              for need in &amp;classification.needs {</code></pre></figure>
+<figure data-kind="source" data-path="src/lib.rs" data-start="326" data-end="335"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/50afb3efaaa06c2b1c6eb64cc98d5ef41f516213/src/lib.rs#L326-L335">src/lib.rs · lines 326–335</a> · exact source excerpt</figcaption><pre><code>326          let mut products: BTreeMap&lt;String, ProductDemand&gt; = BTreeMap::new();
+327          for (row, classification) in input.feedback.iter().zip(&amp;classifications) {
+328              let product = products.entry(row.product_id.clone()).or_default();
+329              if !classification.needs.is_empty() {
+330                  if let Some(customer) = &amp;row.customer_id {
+331                      product.customers.insert(customer.clone());
+332                  }
+333              }
+334              for request in &amp;classification.needs {
+335                  let identity = aliases.get(&amp;(row.product_id.clone(), request.need.clone()));</code></pre></figure>
 <p>Demand deduplication is a different operation: customer sets count a person once per need. Sorting the classification vector does not perform customer deduplication.</p>
 </section><div class="next"><a href="06-functions-and-closures.html">← Functions, closures, and the classifier boundary</a><a href="README.md">Lesson index →</a></div></main><footer><p>Standalone examples are teaching examples, not application changes. Exact Ship Signal excerpts refer to the source commit above; their links open GitHub. Each lesson works offline without external styles, scripts, or images.</p></footer></body></html>
