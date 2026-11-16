@@ -34,6 +34,9 @@ aside nav{display:block}.toc,.toc-sub{list-style:none;padding:0;margin:0;display
 <li><a href="#classify">04 · Classification</a>
 <ul class="toc-sub">
 <li><a href="#explicit-requests">Explicit requests, underlying needs, and variants</a>
+<ul class="toc-sub">
+<li><a href="#multiple-needs">One message can request multiple needs</a></li>
+</ul>
 </li>
 <li><a href="#classifier-call">Where does the real classifier run?</a>
 </li>
@@ -118,7 +121,7 @@ aside nav{display:block}.toc,.toc-sub{list-style:none;padding:0;margin:0;display
 </ul>
 </nav></aside><main>
 <header class="hero"><div class="eyebrow">Code walkthrough · PR #1</div><h1>From feedback<br>to reviewed demand.</h1><p class="intro">Follow the data from a PostgreSQL message to a saved report, a human-confirmed need identity, and a separately reviewed demand result.</p>
-<div class="meta"><span>Analyzed source SHA: 739c841d51822d70b91f0792e3725aea2a684db0</span><span>Base SHA: 5322a1d76a53fd0b9142a14ebd350ffdabfacff8</span></div>
+<div class="meta"><span>Analyzed source SHA: 5eb7efbcac4505ea8d1892a03cb719316cb191a8</span><span>Base SHA: 5322a1d76a53fd0b9142a14ebd350ffdabfacff8</span></div>
 <p><strong>Before:</strong> the base contains product design and Rust-concepts documentation, but no Rust feedback-analysis application. <strong>After:</strong> this branch adds the CLI, PostgreSQL connector, SQLite reports, and model-assisted identity review. This walkthrough describes the exact source commit above; its own generated artifact is excluded from the code analysis.</p></header>
 <section id="overview"><div class="section-head"><span class="step">01</span><h2>Start here: the complete workflow</h2></div>
 <p>Ship Signal reads customer feedback, identifies explicit feature requests, measures demand, and lets a person decide which requests describe the same underlying need. This PR implements that analysis and identity-review slice. It does not implement the whole feedback-to-ticket-to-PR product.</p>
@@ -237,6 +240,29 @@ cargo run -- report --state /data/fitness/ship-signal.sqlite 1</code></pre></fig
     { &quot;message_index&quot;: 2, &quot;needs&quot;: [] }
   ]
 }</code></pre></figure>
+<h4 id="multiple-needs">One message can request multiple needs</h4>
+<p><strong>One classification per message does not mean one need per message.</strong> <code>Classification.needs</code> is a <code>Vec&lt;Need&gt;</code>, so it can contain zero, one, or several needs. The single-request examples above keep the initial explanation small.</p>
+<div class="note"><strong>Illustrative feedback from Alice.</strong> “Please let me export orders as CSV, and please add dark mode.” Both parts explicitly request product behavior, so one message can produce this classification:</div>
+<figure class="example"><figcaption>Illustrative classification · one message, two needs <span>illustrative</span></figcaption><pre><code>{
+  &quot;message_index&quot;: 0,
+  &quot;needs&quot;: [
+    {
+      &quot;need&quot;: &quot;Export orders&quot;,
+      &quot;variant&quot;: &quot;CSV&quot;
+    },
+    {
+      &quot;need&quot;: &quot;Dark mode&quot;,
+      &quot;variant&quot;: null
+    }
+  ]
+}</code></pre></figure>
+<p>Alice contributes once to each requested need and once to the product’s feature-requesting-customer denominator:</p>
+<div class="table-wrap"><table><thead><tr><th>Count</th><th>Alice’s contribution</th></tr></thead><tbody>
+<tr><td>Export orders customers</td><td>1</td></tr>
+<tr><td>Dark mode customers</td><td>1</td></tr>
+<tr><td>Product denominator</td><td>1 in total, even though she requested two needs</td></tr>
+</tbody></table></div>
+<p>Repeated requests from Alice still count her once per need and once in the denominator. A message with no explicit feature request has <code>needs: []</code>. Because one customer can support multiple needs, percentages across needs can add up to more than 100%.</p>
 <h3 id="classifier-call">Where does the real classifier run?</h3>
 <p>In the CLI, the supplied classifier sends the message index, product ID, and text to the configured OpenAI model through Rig. Customer IDs and source references are not included in this classification payload; message text itself can contain personal information. Empty input skips the model call.</p>
 <figure data-source="src/main.rs" data-start="120" data-end="128"><figcaption>src/main.rs · lines 120–128 <span>exact source excerpt</span></figcaption><pre><code>120                  if feedback.is_empty() { return Ok(vec![]); }
