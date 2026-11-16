@@ -82,6 +82,8 @@ aside nav{display:block}.toc,.toc-sub{list-style:none;padding:0;margin:0;display
 </li>
 <li><a href="#review-result">7.6 · Save a separate reviewed report</a>
 </li>
+<li><a href="#map-need">7.7 · map-need: record a decision, then recalculate</a>
+</li>
 </ul>
 </li>
 <li><a href="#example">08 · Worked example</a>
@@ -121,7 +123,7 @@ aside nav{display:block}.toc,.toc-sub{list-style:none;padding:0;margin:0;display
 </ul>
 </nav></aside><main>
 <header class="hero"><div class="eyebrow">Code walkthrough · PR #1</div><h1>From feedback<br>to reviewed demand.</h1><p class="intro">Follow the data from a PostgreSQL message to a saved report, a human-confirmed need identity, and a separately reviewed demand result.</p>
-<div class="meta"><span>Analyzed source SHA: 5eb7efbcac4505ea8d1892a03cb719316cb191a8</span><span>Base SHA: 5322a1d76a53fd0b9142a14ebd350ffdabfacff8</span></div>
+<div class="meta"><span>Analyzed source SHA: e994ab016d5972bdd095d8fd14fc9c39b1435488</span><span>Base SHA: 5322a1d76a53fd0b9142a14ebd350ffdabfacff8</span></div>
 <p><strong>Before:</strong> the base contains product design and Rust-concepts documentation, but no Rust feedback-analysis application. <strong>After:</strong> this branch adds the CLI, PostgreSQL connector, SQLite reports, and model-assisted identity review. This walkthrough describes the exact source commit above; its own generated artifact is excluded from the code analysis.</p></header>
 <section id="overview"><div class="section-head"><span class="step">01</span><h2>Start here: the complete workflow</h2></div>
 <p>Ship Signal reads customer feedback, identifies explicit feature requests, measures demand, and lets a person decide which requests describe the same underlying need. This PR implements that analysis and identity-review slice. It does not implement the whole feedback-to-ticket-to-PR product.</p>
@@ -420,7 +422,7 @@ cargo run -- report --state /data/fitness/ship-signal.sqlite 1</code></pre></fig
 <p>After Analyze saves a report, start the interactive review command. The function is named <code>review_needs</code> in Rust; the CLI command uses a hyphen: <code>review-needs</code>.</p>
 <figure class="example"><figcaption>Example command · review an existing report; model configuration required <span>illustrative</span></figcaption><pre><code>cargo run -- review-needs --state ./ship-signal.sqlite --report 1</code></pre></figure>
 <p>As with Analyze, the command requires the configured analysis model and API credentials. It presents one unresolved need at a time in the terminal, including supporting messages, variants, customer count, <a href="#review-candidates">review candidates (possible existing identity matches)</a>, and a suggestion with its reason. These candidates are identities, not the source feedback rows checked in <a href="#diagnostics">section 3</a>.</p>
-<div class="subnav"><a href="#first-review">First review</a><a href="#review-candidates">Identity candidates</a><a href="#suggestions">Model call</a><a href="#confirm">Human decision</a><a href="#deferrals">Defer &amp; resume</a><a href="#review-result">New report</a></div>
+<div class="subnav"><a href="#first-review">First review</a><a href="#review-candidates">Identity candidates</a><a href="#suggestions">Model call</a><a href="#confirm">Human decision</a><a href="#deferrals">Defer &amp; resume</a><a href="#review-result">New report</a><a href="#map-need">Manual mapping</a></div>
 <h3 id="first-review">7.1 · What if no identity exists yet?</h3>
 <p>In a fresh database, the report might contain <code>need: "Export orders"</code> with <code>identity: null</code>. There are no existing candidates. The model can suggest a new need or uncertainty, but cannot name a valid existing identity. You can choose Create new and type <code>export-orders</code>, or leave it unresolved.</p>
 <div class="note"><strong>The current model does not suggest new ID text.</strong> For a <code>new</code> or <code>uncertain</code> suggestion, its <code>identity</code> must be NULL. You type the new ID yourself. Model-suggested new ID text is an optional future idea, not current behavior.</div>
@@ -638,6 +640,53 @@ cargo run -- review-needs --state ./ship-signal.sqlite --report 1 --include-defe
 <p>On review completion, <code>review_report</code> passes the original report’s saved input and classifications to the shared calculation with <code>reviewed_from: Some(id)</code>. For example, a fresh run might create report 2 with <code>reviewed_from: 1</code>. It uses current mappings to regroup and recalculate demand, without rereading PostgreSQL or invoking the classifier. The review suggestion calls are a separate model task.</p>
 <p>Report 1 stays unchanged, including its earlier NULL identities and counts. Deferred needs remain unresolved in report 2, so its affected products remain provisional. Quitting or reaching end of input before completion creates no reviewed report; mappings and deferrals already saved survive. Even completing an empty queue can create another snapshot. The entire interactive session is not one database transaction.</p>
 <p>You can also run <code>review-report</code> explicitly after direct mappings. Recalculating saved classifications is distinct from a historical source rerun under ADR-0005, which rereads current source feedback for the original interval.</p>
+<h3 id="map-need">7.7 · map-need: record a decision, then recalculate</h3>
+<p><code>map-need</code> directly creates or corrects a human-confirmed need-to-identity mapping. Use it when you already know the decision, want to map a deferred need directly, or need to correct a previously confirmed mapping. It does not require a model call or the interactive review queue.</p>
+<p>The two manual commands have separate responsibilities: <code>map-need</code> records the decision; <code>review-report</code> applies current mappings to saved feedback and classifications to produce a new report.</p>
+<p>For example, suppose report 1 contains <code>need: "Download orders"</code> with <code>identity: null</code>. You decide it belongs to <code>export-orders</code>:</p>
+<figure class="example"><figcaption>Example command · directly assign a confirmed identity <span>illustrative</span></figcaption><pre><code>cargo run -- map-need \
+  --state ./ship-signal.sqlite \
+  --product demo-shop \
+  --need &quot;Download orders&quot; \
+  --identity export-orders</code></pre></figure>
+<p>This immediately saves <code>(demo-shop, Download orders) → export-orders</code> in <code>need_identity_aliases</code>. Future analyses and refreshed review queues can use it. Report 1 keeps its earlier result because it is a saved snapshot, not a live query of today’s mappings.</p>
+<div class="table-wrap"><table><thead><tr><th>Stage</th><th>Current mapping</th><th>Saved report result</th></tr></thead><tbody>
+<tr><td>Before mapping</td><td>No mapping for Download orders</td><td>Report 1: <code>identity: null</code></td></tr>
+<tr><td>After map-need</td><td><code>Download orders → export-orders</code></td><td>Report 1 still has <code>identity: null</code></td></tr>
+<tr><td>After review-report</td><td>The same confirmed mapping</td><td>A new report contains <code>identity: "export-orders"</code>; report 1 remains unchanged</td></tr>
+</tbody></table></div>
+<figure class="example"><figcaption>Example command · recalculate from report 1’s saved evidence <span>illustrative</span></figcaption><pre><code>cargo run -- review-report --state ./ship-signal.sqlite 1</code></pre></figure>
+<p>The new report records <code>reviewed_from: 1</code>, regroups needs using the current mappings, and recalculates demand. It does not reread PostgreSQL or rerun classification. Running <code>report</code> alone displays the saved snapshot; it does not recalculate it.</p>
+<div class="note"><strong>Why can the old report differ from current mappings?</strong> They describe different moments. The mappings table holds current decisions; a report preserves the calculation made when that snapshot was saved. To obtain results using current decisions, explicitly create a new reviewed report. This preserves the evidence behind earlier counts and avoids silently changing history.</div>
+<p><strong>Correcting a mapping requires the previous identity.</strong> If Download orders is currently mapped to <code>export-orders</code>, but you decide it should use <code>order-download</code>, run:</p>
+<figure class="example"><figcaption>Example command · explicitly correct an existing mapping <span>illustrative</span></figcaption><pre><code>cargo run -- map-need \
+  --state ./ship-signal.sqlite \
+  --product demo-shop \
+  --need &quot;Download orders&quot; \
+  --previous-identity export-orders \
+  --identity order-download</code></pre></figure>
+<p>The correction succeeds only if the saved identity still equals <code>export-orders</code>. Omitting <code>--previous-identity</code> does not silently overwrite a different mapping. After correcting it, run <code>review-report</code> for the saved report whose evidence you want recalculated; that creates another snapshot.</p>
+<figure data-source="src/main.rs" data-start="151" data-end="170"><figcaption>src/main.rs · lines 151–170 <span>exact source excerpt</span></figcaption><pre><code>151          Command::MapNeed {
+152              state,
+153              product,
+154              need,
+155              identity,
+156              previous_identity,
+157          } =&gt; {
+158              let workflow = Workflow::open(state)?;
+159              match previous_identity {
+160                  Some(previous) =&gt; {
+161                      workflow.correct_need_identity(&amp;product, &amp;need, &amp;previous, &amp;identity)?
+162                  }
+163                  None =&gt; workflow.assign_need_identity(&amp;product, &amp;need, &amp;identity)?,
+164              }
+165              println!(&quot;Need identity mapping saved for future analyses.&quot;);
+166          }
+167          Command::ReviewReport { state, id } =&gt; println!(
+168              &quot;{}&quot;,
+169              serde_json::to_string_pretty(&amp;Workflow::open(state)?.review_report(id)?)?
+170          ),</code></pre></figure>
+<p>The command branches show the separation: <code>MapNeed</code> assigns or corrects the mapping and prints confirmation, while <code>ReviewReport</code> calls the recalculation. For the guided route, <code>review-needs</code> collects human decisions interactively and creates a separate report on normal completion, as explained in <a href="#review-result">section 7.6</a>.</p>
 </section><section id="example"><div class="section-head"><span class="step">08</span><h2>Complete worked example</h2></div>
 <div class="pill">Illustrative · controlled assumptions, not a live model result</div>
 <p>Assume a fresh state file with no confirmed mappings and one product, <code>demo-shop</code>. All seven messages are valid and fall within the requested interval. The classifier returns these needs; different wording for the export need intentionally demonstrates why review matters.</p>
