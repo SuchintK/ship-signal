@@ -27,7 +27,7 @@ aside nav{display:block}.toc,.toc-sub{list-style:none;padding:0;margin:0;display
 </li>
 <li><a href="#source-validation">Read the interval and exclude invalid rows</a>
 </li>
-<li><a href="#diagnostics">Diagnostics versus candidates</a>
+<li><a href="#diagnostics">Diagnostics versus source-row candidates</a>
 </li>
 </ul>
 </li>
@@ -65,7 +65,7 @@ aside nav{display:block}.toc,.toc-sub{list-style:none;padding:0;margin:0;display
 <ul class="toc-sub">
 <li><a href="#first-review">7.1 · What if no identity exists yet?</a>
 </li>
-<li><a href="#review-candidates">7.2 · Where do existing candidates come from?</a>
+<li><a href="#review-candidates">7.2 · Where do review candidates come from?</a>
 </li>
 <li><a href="#suggestions">7.3 · How does the model suggest a match?</a>
 <ul class="toc-sub">
@@ -118,7 +118,7 @@ aside nav{display:block}.toc,.toc-sub{list-style:none;padding:0;margin:0;display
 </ul>
 </nav></aside><main>
 <header class="hero"><div class="eyebrow">Code walkthrough · PR #1</div><h1>From feedback<br>to reviewed demand.</h1><p class="intro">Follow the data from a PostgreSQL message to a saved report, a human-confirmed need identity, and a separately reviewed demand result.</p>
-<div class="meta"><span>Analyzed source SHA: 594141cc3a987ac8ed3e385d14b0515ea70dd1f0</span><span>Base SHA: 5322a1d76a53fd0b9142a14ebd350ffdabfacff8</span></div>
+<div class="meta"><span>Analyzed source SHA: 739c841d51822d70b91f0792e3725aea2a684db0</span><span>Base SHA: 5322a1d76a53fd0b9142a14ebd350ffdabfacff8</span></div>
 <p><strong>Before:</strong> the base contains product design and Rust-concepts documentation, but no Rust feedback-analysis application. <strong>After:</strong> this branch adds the CLI, PostgreSQL connector, SQLite reports, and model-assisted identity review. This walkthrough describes the exact source commit above; its own generated artifact is excluded from the code analysis.</p></header>
 <section id="overview"><div class="section-head"><span class="step">01</span><h2>Start here: the complete workflow</h2></div>
 <p>Ship Signal reads customer feedback, identifies explicit feature requests, measures demand, and lets a person decide which requests describe the same underlying need. This PR implements that analysis and identity-review slice. It does not implement the whole feedback-to-ticket-to-PR product.</p>
@@ -182,10 +182,17 @@ cargo run -- report --state /data/fitness/ship-signal.sqlite 1</code></pre></fig
  75              .context(&quot;read feedback view&quot;)?;
  76          tx.commit()?;</code></pre></figure>
 <p>The transaction is read-only. The interval includes <code>start</code> and excludes <code>end</code>, written <code>[start, end)</code>. NULL timestamps are fetched too, so they can be reported as invalid. After field validation, every candidate row sharing a duplicate <code>(product_id, feedback_source_id, source_message_id)</code> key is excluded as ambiguous. A NULL customer ID remains valid evidence.</p>
-<h3 id="diagnostics">Diagnostics versus candidates</h3>
+<h3 id="diagnostics">Diagnostics versus source-row candidates</h3>
 <figure data-source="src/postgres_source.rs" data-start="77" data-end="78"><figcaption>src/postgres_source.rs · lines 77–78 <span>exact source excerpt</span></figcaption><pre><code> 77          let mut diagnostics = BTreeMap::new();
  78          let mut candidates = Vec::new();</code></pre></figure>
-<p><code>diagnostics</code> holds exclusion counts and reason names. <code>candidates</code> holds rows that passed field checks but still need duplicate-identity checking. These source-row candidates are separate from the possible identity matches used during review.</p>
+<p><code>diagnostics</code> holds exclusion counts and reason names. Here, <code>candidates</code> means <strong>source-row candidates: feedback messages being considered for analysis</strong>. They have passed field checks but still need duplicate-message-identity checking. They are not possible need identities.</p>
+<div class="table-wrap"><table><thead><tr><th>Distinction</th><th>Source-row candidates</th><th>Review candidates</th></tr></thead><tbody>
+<tr><td>What is an item?</td><td>A <code>Feedback</code> row, such as Alice’s message “Please download orders as CSV.”</td><td>A <code>NeedCandidate</code>: an existing identity such as <code>export-orders</code>, with the needs already mapped to it.</td></tr>
+<tr><td>Where does it come from?</td><td>The PostgreSQL feedback view, after required-field validation.</td><td>Human-confirmed mappings in SQLite’s <code>need_identity_aliases</code> table, for the same product.</td></tr>
+<tr><td>What is being decided?</td><td>Can this source message enter the analysis, or is its message identity duplicated?</td><td>Does an unresolved need describe the same underlying goal as an existing identity?</td></tr>
+<tr><td>What happens next?</td><td>Rows with duplicate message identities are excluded; remaining messages become <code>AnalysisInput.feedback</code>.</td><td>The model suggests a match, new need, or uncertainty; a person decides whether to save a mapping.</td></tr>
+</tbody></table></div>
+<p>The shared word “candidate” means something under consideration. The first list contains <strong>messages awaiting final validation</strong>; the second contains <strong>existing identities offered as possible matches</strong>. Jump to <a href="#review-candidates">review candidates in section 7.2</a> for their construction.</p>
 <div class="note"><strong>Illustrative example.</strong> Row A is valid. B has empty feedback text. C and D pass field checks but share a message identity. Final feedback contains A; diagnostics contain <code>invalid_rows: 3</code>, <code>feedback_text: 1</code>, and <code>duplicate_message_identity: 2</code>. A row with several field problems contributes once to <code>invalid_rows</code> and once to each applicable reason, so reason counts need not sum to the invalid-row total.</div>
 <figure data-source="src/postgres_source.rs" data-start="149" data-end="152"><figcaption>src/postgres_source.rs · lines 149–152 <span>exact source excerpt</span></figcaption><pre><code>149          Ok(AnalysisInput {
 150              feedback: candidates,
@@ -386,13 +393,13 @@ cargo run -- report --state /data/fitness/ship-signal.sqlite 1</code></pre></fig
 </section><section id="review"><div class="section-head"><span class="step">07</span><h2>Review unresolved needs</h2></div>
 <p>After Analyze saves a report, start the interactive review command. The function is named <code>review_needs</code> in Rust; the CLI command uses a hyphen: <code>review-needs</code>.</p>
 <figure class="example"><figcaption>Example command · review an existing report; model configuration required <span>illustrative</span></figcaption><pre><code>cargo run -- review-needs --state ./ship-signal.sqlite --report 1</code></pre></figure>
-<p>As with Analyze, the command requires the configured analysis model and API credentials. It presents one unresolved need at a time in the terminal, including supporting messages, variants, customer count, candidates, and a suggestion with its reason.</p>
-<div class="subnav"><a href="#first-review">First review</a><a href="#review-candidates">Candidates</a><a href="#suggestions">Model call</a><a href="#confirm">Human decision</a><a href="#deferrals">Defer &amp; resume</a><a href="#review-result">New report</a></div>
+<p>As with Analyze, the command requires the configured analysis model and API credentials. It presents one unresolved need at a time in the terminal, including supporting messages, variants, customer count, <a href="#review-candidates">review candidates (possible existing identity matches)</a>, and a suggestion with its reason. These candidates are identities, not the source feedback rows checked in <a href="#diagnostics">section 3</a>.</p>
+<div class="subnav"><a href="#first-review">First review</a><a href="#review-candidates">Identity candidates</a><a href="#suggestions">Model call</a><a href="#confirm">Human decision</a><a href="#deferrals">Defer &amp; resume</a><a href="#review-result">New report</a></div>
 <h3 id="first-review">7.1 · What if no identity exists yet?</h3>
 <p>In a fresh database, the report might contain <code>need: "Export orders"</code> with <code>identity: null</code>. There are no existing candidates. The model can suggest a new need or uncertainty, but cannot name a valid existing identity. You can choose Create new and type <code>export-orders</code>, or leave it unresolved.</p>
 <div class="note"><strong>The current model does not suggest new ID text.</strong> For a <code>new</code> or <code>uncertain</code> suggestion, its <code>identity</code> must be NULL. You type the new ID yourself. Model-suggested new ID text is an optional future idea, not current behavior.</div>
-<h3 id="review-candidates">7.2 · Where do existing candidates come from?</h3>
-<p>The queue reads unresolved needs from the saved report and current confirmed mappings from <code>need_identity_aliases</code>. It groups same-product aliases by identity to make candidates. The report being reviewed does not need to contain those identities already.</p>
+<h3 id="review-candidates">7.2 · Where do review candidates come from?</h3>
+<p><strong>A review candidate is an existing confirmed need identity that might match the unresolved need.</strong> It is not a feedback message awaiting validation. The queue reads unresolved needs from the saved report and current confirmed mappings from <code>need_identity_aliases</code>, then groups same-product mappings by identity. Each resulting <code>NeedCandidate</code> has an <code>identity</code> and its mapped <code>needs</code>. The report being reviewed does not need to contain those identities already.</p>
 <figure data-source="src/lib.rs" data-start="225" data-end="249"><figcaption>src/lib.rs · lines 225–249 <span>exact source excerpt</span></figcaption><pre><code>225      pub fn need_review_queue(&amp;self, id: i64) -&gt; Result&lt;Vec&lt;NeedReviewItem&gt;&gt; {
 226          let report = self.report(id)?;
 227          let aliases = self.need_identity_aliases()?;
@@ -418,7 +425,9 @@ cargo run -- report --state /data/fitness/ship-signal.sqlite 1</code></pre></fig
 247                      .any(|a| a.product_id == product.product_id &amp;&amp; a.need == report_need.need)
 248                  {
 249                      continue;</code></pre></figure>
-<p>A candidate contains an identity and the needs already mapped to it. The review item also contains the current unresolved need, its messages, variants, and customer count. It does not retrieve historical feedback messages for every existing candidate. Candidates are refreshed after each decision, so an ID you create can be offered for another need later in the same session.</p>
+<p>The review item contains the current unresolved need and its supporting messages separately from the candidate identities. It does not retrieve historical feedback messages for every existing candidate. A fresh database has no review candidates until a person creates an identity mapping.</p>
+<div class="note"><strong>Illustrative example.</strong> The source message “Please download orders as CSV” passes validation and is classified as <code>need: "Download orders"</code>. During review, <code>export-orders</code> might be offered as a candidate because a person previously mapped <code>Export orders</code> to it. The message is evidence; <code>export-orders</code> is the possible identity match.</div>
+<p><strong>Review candidates refresh before each item.</strong> If you confirm <code>Download orders → export-orders</code>, the next item for that product sees <code>export-orders</code> with both <code>Download orders</code> and <code>Export orders</code> in its mapped <code>needs</code>. This works within the same command run; it does not require restarting review or rewriting the original report.</p>
 <h3 id="suggestions">7.3 · How does the model suggest a match?</h3>
 <p>For a later need such as <code>Download orders</code>, the model might receive this information. Assume a person has already confirmed <code>Export orders → export-orders</code>:</p>
 <figure class="example"><figcaption>Illustrative review-model input · assumes an earlier confirmed mapping <span>illustrative</span></figcaption><pre><code>{
