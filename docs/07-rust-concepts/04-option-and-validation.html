@@ -4,7 +4,7 @@
 @media(max-width:650px){header,main,footer{padding-inline:18px}header{padding-top:32px}body{font-size:16px}h2{font-size:24px}th,td{padding:10px}pre{padding:15px}}
 @media print{body{color:#1e303a;background:white}header,main,footer{max-width:none;padding:15px}nav{display:none}.lede,.meta,.caption,footer{color:#485e69}code,a,.eyebrow{color:#14624d}figure{background:#f2f6f7;border-color:#aabcc4}figcaption,th,.note{background:#eaf2f3;color:#223c49}pre code{color:#152b37}pre{white-space:pre-wrap}pre code{white-space:pre-wrap}h2,h3{break-after:avoid}tr,figure{break-inside:avoid}}
 </style></head>
-<body><header><div class="eyebrow">Ship Signal / Rust concepts / 04</div><h1>Option and optional-value validation</h1><p class="lede">Understand Some, None, and why an optional string can still need validation.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>217ee8f20d7e561a25062331f99dc8fba99a1d59</code></p><nav aria-label="Lesson contents"><a href="#option">Option means a value may be absent</a><a href="#empty">Absent and present-but-empty are different</a><a href="#expression">Read the actual validation expression</a><a href="#different-fields">The meaning of None depends on the field</a></nav></header><main><section id="option"><h2>Option means a value may be absent</h2>
+<body><header><div class="eyebrow">Ship Signal / Rust concepts / 04</div><h1>Option and optional-value validation</h1><p class="lede">Understand Some, None, and why an optional string can still need validation.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>50afb3efaaa06c2b1c6eb64cc98d5ef41f516213</code></p><nav aria-label="Lesson contents"><a href="#option">Option means a value may be absent</a><a href="#empty">Absent and present-but-empty are different</a><a href="#expression">Read the actual validation expression</a><a href="#different-fields">The meaning of None depends on the field</a></nav></header><main><section id="option"><h2>Option means a value may be absent</h2>
 <p><code>Option&lt;T&gt;</code> has two forms: <code>Some(value)</code> holds a value of type T, and <code>None</code> means there is no value. It makes absence explicit in the type.</p>
 <figure data-kind="run"><figcaption>Standalone Rust example</figcaption><pre><code>fn main() {
     let csv: Option&lt;String&gt; = Some(String::from(&quot;CSV&quot;));
@@ -21,15 +21,18 @@
 <div class="table-wrap"><table><thead><tr><th>Rust value</th><th>What the type says</th><th>Ship Signal’s variant rule</th></tr></thead><tbody><tr><td><code>None</code></td><td>No variant was supplied.</td><td>Accepted.</td></tr><tr><td><code>Some(String::from("CSV"))</code></td><td>A string was supplied.</td><td>Accepted.</td></tr><tr><td><code>Some(String::from(""))</code></td><td>A string was supplied, but it is empty.</td><td>Rejected.</td></tr><tr><td><code>Some(String::from("   "))</code></td><td>A string was supplied, containing whitespace.</td><td>Rejected.</td></tr></tbody></table></div>
 <p><code>Option&lt;String&gt;</code> permits all four values at the type level. The application adds the nonblank-content rule. Optional does not mean that every present value is meaningful.</p>
 </section><section id="expression"><h2>Read the actual validation expression</h2>
-<figure data-kind="source" data-path="src/lib.rs" data-start="311" data-end="319"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L311-L319">src/lib.rs · lines 311–319</a> · exact source excerpt</figcaption><pre><code>311              for need in &amp;classification.needs {
-312                  ensure!(
-313                      !need.name.trim().is_empty(),
-314                      &quot;classifier returned an empty need name&quot;
-315                  );
-316                  ensure!(
-317                      need.variant.as_ref().is_none_or(|v| !v.trim().is_empty()),
-318                      &quot;classifier returned an empty variant&quot;
-319                  );</code></pre></figure>
+<figure data-kind="source" data-path="src/lib.rs" data-start="304" data-end="315"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/50afb3efaaa06c2b1c6eb64cc98d5ef41f516213/src/lib.rs#L304-L315">src/lib.rs · lines 304–315</a> · exact source excerpt</figcaption><pre><code>304              for request in &amp;classification.needs {
+305                  ensure!(
+306                      !request.need.trim().is_empty(),
+307                      &quot;classifier returned an empty need&quot;
+308                  );
+309                  ensure!(
+310                      request
+311                          .variant
+312                          .as_ref()
+313                          .is_none_or(|v| !v.trim().is_empty()),
+314                      &quot;classifier returned an empty variant&quot;
+315                  );</code></pre></figure>
 <p>The variant expression checks these steps:</p>
 <ol><li><code>as_ref()</code> borrows the value inside the option, producing <code>Option&lt;&amp;String&gt;</code>. The check does not take ownership of the original string.</li><li><code>is_none_or(...)</code> succeeds when the option is <code>None</code>, or when the supplied condition succeeds for a present value.</li><li><code>|v| !v.trim().is_empty()</code> is the condition: after ignoring leading and trailing whitespace, the string must contain something.</li></ol>
 <p><code>trim()</code> is used to inspect the value; this expression does not rewrite or normalize the saved string.</p>

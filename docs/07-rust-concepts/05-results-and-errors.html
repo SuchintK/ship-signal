@@ -4,7 +4,7 @@
 @media(max-width:650px){header,main,footer{padding-inline:18px}header{padding-top:32px}body{font-size:16px}h2{font-size:24px}th,td{padding:10px}pre{padding:15px}}
 @media print{body{color:#1e303a;background:white}header,main,footer{max-width:none;padding:15px}nav{display:none}.lede,.meta,.caption,footer{color:#485e69}code,a,.eyebrow{color:#14624d}figure{background:#f2f6f7;border-color:#aabcc4}figcaption,th,.note{background:#eaf2f3;color:#223c49}pre code{color:#152b37}pre{white-space:pre-wrap}pre code{white-space:pre-wrap}h2,h3{break-after:avoid}tr,figure{break-inside:avoid}}
 </style></head>
-<body><header><div class="eyebrow">Ship Signal / Rust concepts / 05</div><h1>Result, error propagation, and ensure!</h1><p class="lede">Read success and failure paths without confusing an ordinary error with a panic.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>217ee8f20d7e561a25062331f99dc8fba99a1d59</code></p><nav aria-label="Lesson contents"><a href="#result">Result carries either success or an error</a><a href="#question-mark">What does ? do?</a><a href="#ensure">ensure! checks a condition and returns an error if it fails</a><a href="#project">Follow the failure path through Analyze</a></nav></header><main><section id="result"><h2>Result carries either success or an error</h2>
+<body><header><div class="eyebrow">Ship Signal / Rust concepts / 05</div><h1>Result, error propagation, and ensure!</h1><p class="lede">Read success and failure paths without confusing an ordinary error with a panic.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>50afb3efaaa06c2b1c6eb64cc98d5ef41f516213</code></p><nav aria-label="Lesson contents"><a href="#result">Result carries either success or an error</a><a href="#question-mark">What does ? do?</a><a href="#ensure">ensure! checks a condition and returns an error if it fails</a><a href="#project">Follow the failure path through Analyze</a></nav></header><main><section id="result"><h2>Result carries either success or an error</h2>
 <p><code>Result&lt;T, E&gt;</code> is either <code>Ok(value)</code>, containing a success value of type T, or <code>Err(error)</code>, containing an error of type E. A function can return <code>Result</code> to let its caller handle failure.</p>
 <figure data-kind="run"><figcaption>Standalone Rust example</figcaption><pre><code>fn parse_count(text: &amp;str) -&gt; Result&lt;usize, std::num::ParseIntError&gt; {
     text.parse::&lt;usize&gt;()
@@ -28,24 +28,24 @@ fn main() {
 }</code></pre></figure>
 <p>The successful literal inputs make <code>unwrap()</code> safe in these small examples. Unwrapping an actual <code>Err</code> would panic; returning the error with <code>?</code> lets the caller decide how to handle it.</p>
 </section><section id="ensure"><h2>ensure! checks a condition and returns an error if it fails</h2>
-<figure data-kind="source" data-path="src/lib.rs" data-start="301" data-end="310"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L301-L310">src/lib.rs · lines 301–310</a> · exact source excerpt</figcaption><pre><code>301          ensure!(
-302              classifications.len() == input.feedback.len(),
-303              &quot;classifier must return one classification per message&quot;
-304          );
-305          classifications.sort_by_key(|c| c.message_index);
-306          for (i, classification) in classifications.iter().enumerate() {
-307              ensure!(
-308                  classification.message_index == i,
-309                  &quot;classifier returned missing, duplicate, or invalid message index&quot;
-310              );</code></pre></figure>
+<figure data-kind="source" data-path="src/lib.rs" data-start="294" data-end="303"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/50afb3efaaa06c2b1c6eb64cc98d5ef41f516213/src/lib.rs#L294-L303">src/lib.rs · lines 294–303</a> · exact source excerpt</figcaption><pre><code>294          ensure!(
+295              classifications.len() == input.feedback.len(),
+296              &quot;classifier must return one classification per message&quot;
+297          );
+298          classifications.sort_by_key(|c| c.message_index);
+299          for (i, classification) in classifications.iter().enumerate() {
+300              ensure!(
+301                  classification.message_index == i,
+302                  &quot;classifier returned missing, duplicate, or invalid message index&quot;
+303              );</code></pre></figure>
 <p><code>ensure!(condition, "message")</code> means: continue if the condition is true; otherwise return an error with that message. It is a macro from anyhow, not an assertion that requires an optional field to exist. For classifier validation, it stops invalid data before saving a new report.</p>
 <p><code>bail!("message")</code> returns an error immediately. <code>.context("message")</code> adds explanatory context to an error. These appear alongside <code>?</code> to explain which operation failed.</p>
 </section><section id="project"><h2>Follow the failure path through Analyze</h2>
-<figure data-kind="source" data-path="src/lib.rs" data-start="226" data-end="230"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L226-L230">src/lib.rs · lines 226–230</a> · exact source excerpt</figcaption><pre><code>226          ensure!(start &lt; end, &quot;interval start must precede end&quot;);
-227          let input = source.read(start, end)?;
-228          let classifications = classify(&amp;input.feedback)?;
-229          self.complete_analysis(start, end, input, classifications, None)
-230      }</code></pre></figure>
+<figure data-kind="source" data-path="src/lib.rs" data-start="219" data-end="223"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/50afb3efaaa06c2b1c6eb64cc98d5ef41f516213/src/lib.rs#L219-L223">src/lib.rs · lines 219–223</a> · exact source excerpt</figcaption><pre><code>219          ensure!(start &lt; end, &quot;interval start must precede end&quot;);
+220          let input = source.read(start, end)?;
+221          let classifications = classify(&amp;input.feedback)?;
+222          self.complete_analysis(start, end, input, classifications, None)
+223      }</code></pre></figure>
 <p>If <code>source.read</code> fails, classification is not called. If the classifier fails, <code>complete_analysis</code> is not called. If validation inside <code>complete_analysis</code> fails, the new report is not inserted.</p>
 <div class="note"><strong>An early error is not an automatic rollback of all earlier work.</strong> In interactive review, confirmed mappings are saved as decisions are made. A later error returns from the operation while those earlier decisions remain saved. Only operations inside an appropriate database transaction share its rollback boundary.</div>
 </section><div class="next"><a href="04-option-and-validation.html">← Option and optional-value validation</a><a href="06-functions-and-closures.html">Functions, closures, and the classifier boundary →</a></div></main><footer><p>Standalone examples are teaching examples, not application changes. Exact Ship Signal excerpts refer to the source commit above; their links open GitHub. Each lesson works offline without external styles, scripts, or images.</p></footer></body></html>

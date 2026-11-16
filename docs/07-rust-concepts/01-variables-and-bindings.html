@@ -4,7 +4,7 @@
 @media(max-width:650px){header,main,footer{padding-inline:18px}header{padding-top:32px}body{font-size:16px}h2{font-size:24px}th,td{padding:10px}pre{padding:15px}}
 @media print{body{color:#1e303a;background:white}header,main,footer{max-width:none;padding:15px}nav{display:none}.lede,.meta,.caption,footer{color:#485e69}code,a,.eyebrow{color:#14624d}figure{background:#f2f6f7;border-color:#aabcc4}figcaption,th,.note{background:#eaf2f3;color:#223c49}pre code{color:#152b37}pre{white-space:pre-wrap}pre code{white-space:pre-wrap}h2,h3{break-after:avoid}tr,figure{break-inside:avoid}}
 </style></head>
-<body><header><div class="eyebrow">Ship Signal / Rust concepts / 01</div><h1>Variables and bindings</h1><p class="lede">Understand what a name refers to, what mut allows, and how a variable differs from a reference.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>217ee8f20d7e561a25062331f99dc8fba99a1d59</code></p><nav aria-label="Lesson contents"><a href="#bindings">A binding gives a value a name</a><a href="#shadowing">Changing a value versus creating a new binding</a><a href="#references">A variable can hold a value or a reference</a><a href="#project">In Ship Signal: mutating a local vector</a></nav></header><main><section id="bindings"><h2>A binding gives a value a name</h2>
+<body><header><div class="eyebrow">Ship Signal / Rust concepts / 01</div><h1>Variables and bindings</h1><p class="lede">Understand what a name refers to, what mut allows, and how a variable differs from a reference.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>50afb3efaaa06c2b1c6eb64cc98d5ef41f516213</code></p><nav aria-label="Lesson contents"><a href="#bindings">A binding gives a value a name</a><a href="#shadowing">Changing a value versus creating a new binding</a><a href="#references">A variable can hold a value or a reference</a><a href="#project">In Ship Signal: mutating a local vector</a></nav></header><main><section id="bindings"><h2>A binding gives a value a name</h2>
 <p>In <code>let count = 3;</code>, <code>count</code> is a binding: a name associated with a value. In everyday Rust discussion, people often call this a variable. By default, you cannot assign a different value through that binding.</p>
 <figure data-kind="run"><figcaption>Standalone Rust example</figcaption><pre><code>fn main() {
     let count = 3;
@@ -29,18 +29,18 @@
 <p>The reference declarations above illustrate the types of binding; their allowed overlap depends on how the references are used. The <a href="02-references-and-borrowing.html">references lesson</a> shows a complete valid example.</p>
 </section><section id="project"><h2>In Ship Signal: mutating a local vector</h2>
 <p>The <code>mut classifications</code> parameter allows the function to reorder its owned vector. <code>sort_by_key</code> changes that vector’s order in place. The classification count is checked before sorting.</p>
-<figure data-kind="source" data-path="src/lib.rs" data-start="293" data-end="305"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L293-L305">src/lib.rs · lines 293–305</a> · exact source excerpt</figcaption><pre><code>293      fn complete_analysis(
-294          &amp;mut self,
-295          start: DateTime&lt;Utc&gt;,
-296          end: DateTime&lt;Utc&gt;,
-297          input: AnalysisInput,
-298          mut classifications: Vec&lt;Classification&gt;,
-299          reviewed_from: Option&lt;i64&gt;,
-300      ) -&gt; Result&lt;Report&gt; {
-301          ensure!(
-302              classifications.len() == input.feedback.len(),
-303              &quot;classifier must return one classification per message&quot;
-304          );
-305          classifications.sort_by_key(|c| c.message_index);</code></pre></figure>
+<figure data-kind="source" data-path="src/lib.rs" data-start="286" data-end="298"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/50afb3efaaa06c2b1c6eb64cc98d5ef41f516213/src/lib.rs#L286-L298">src/lib.rs · lines 286–298</a> · exact source excerpt</figcaption><pre><code>286      fn complete_analysis(
+287          &amp;mut self,
+288          start: DateTime&lt;Utc&gt;,
+289          end: DateTime&lt;Utc&gt;,
+290          input: AnalysisInput,
+291          mut classifications: Vec&lt;Classification&gt;,
+292          reviewed_from: Option&lt;i64&gt;,
+293      ) -&gt; Result&lt;Report&gt; {
+294          ensure!(
+295              classifications.len() == input.feedback.len(),
+296              &quot;classifier must return one classification per message&quot;
+297          );
+298          classifications.sort_by_key(|c| c.message_index);</code></pre></figure>
 <div class="note"><strong>Read the placement of mut.</strong> <code>mut classifications: Vec&lt;Classification&gt;</code> is a mutable binding holding an owned vector. <code>&amp;mut Vec&lt;Classification&gt;</code> would describe a borrowed vector instead.</div>
 </section><div class="next"><a href="README.md">← Lesson index</a><a href="02-references-and-borrowing.html">Shared and mutable references →</a></div></main><footer><p>Standalone examples are teaching examples, not application changes. Exact Ship Signal excerpts refer to the source commit above; their links open GitHub. Each lesson works offline without external styles, scripts, or images.</p></footer></body></html>

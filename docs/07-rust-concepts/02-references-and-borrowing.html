@@ -4,7 +4,7 @@
 @media(max-width:650px){header,main,footer{padding-inline:18px}header{padding-top:32px}body{font-size:16px}h2{font-size:24px}th,td{padding:10px}pre{padding:15px}}
 @media print{body{color:#1e303a;background:white}header,main,footer{max-width:none;padding:15px}nav{display:none}.lede,.meta,.caption,footer{color:#485e69}code,a,.eyebrow{color:#14624d}figure{background:#f2f6f7;border-color:#aabcc4}figcaption,th,.note{background:#eaf2f3;color:#223c49}pre code{color:#152b37}pre{white-space:pre-wrap}pre code{white-space:pre-wrap}h2,h3{break-after:avoid}tr,figure{break-inside:avoid}}
 </style></head>
-<body><header><div class="eyebrow">Ship Signal / Rust concepts / 02</div><h1>Shared and mutable references</h1><p class="lede">Borrow a value to read it or change it without taking ownership.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>217ee8f20d7e561a25062331f99dc8fba99a1d59</code></p><nav aria-label="Lesson contents"><a href="#borrow">What does a reference do?</a><a href="#kinds">Two reference forms used in this code</a><a href="#overlap">Why does overlapping access fail?</a><a href="#binding-mut">Does the reference binding itself need mut?</a><a href="#project">In Ship Signal: &amp;mut source does not mean a writable database</a></nav></header><main><section id="borrow"><h2>What does a reference do?</h2>
+<body><header><div class="eyebrow">Ship Signal / Rust concepts / 02</div><h1>Shared and mutable references</h1><p class="lede">Borrow a value to read it or change it without taking ownership.</p><p class="meta"><a href="README.md">All lessons</a> · Ship Signal excerpts at source commit <code>50afb3efaaa06c2b1c6eb64cc98d5ef41f516213</code></p><nav aria-label="Lesson contents"><a href="#borrow">What does a reference do?</a><a href="#kinds">Two reference forms used in this code</a><a href="#overlap">Why does overlapping access fail?</a><a href="#binding-mut">Does the reference binding itself need mut?</a><a href="#project">In Ship Signal: &amp;mut source does not mean a writable database</a></nav></header><main><section id="borrow"><h2>What does a reference do?</h2>
 <p>If a function takes ownership of a <code>String</code>, the caller usually cannot keep using that same owned value afterward. A reference lets the function borrow access while ownership stays with the caller.</p>
 <figure data-kind="run"><figcaption>Standalone Rust example</figcaption><pre><code>fn show(text: &amp;String) {
     println!(&quot;{text}&quot;);
@@ -45,20 +45,20 @@ fn main() {
 </section><section id="binding-mut"><h2>Does the reference binding itself need mut?</h2>
 <p><code>let write = &amp;mut count;</code> is enough to modify the borrowed value. You do not need <code>let mut write</code> for that. The <code>mut</code> inside <code>&amp;mut</code> controls access to the borrowed value; <code>mut</code> on a binding controls mutation of that binding. Adding <code>mut</code> to a binding holding <code>&amp;T</code> does not turn it into <code>&amp;mut T</code>.</p>
 </section><section id="project"><h2>In Ship Signal: &mut source does not mean a writable database</h2>
-<figure data-kind="source" data-path="src/lib.rs" data-start="219" data-end="230"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/lib.rs#L219-L230">src/lib.rs · lines 219–230</a> · exact source excerpt</figcaption><pre><code>219      pub fn analyze(
-220          &amp;mut self,
-221          source: &amp;mut impl FeedbackSource,
-222          start: DateTime&lt;Utc&gt;,
-223          end: DateTime&lt;Utc&gt;,
-224          classify: impl FnOnce(&amp;[Feedback]) -&gt; Result&lt;Vec&lt;Classification&gt;&gt;,
-225      ) -&gt; Result&lt;Report&gt; {
-226          ensure!(start &lt; end, &quot;interval start must precede end&quot;);
-227          let input = source.read(start, end)?;
-228          let classifications = classify(&amp;input.feedback)?;
-229          self.complete_analysis(start, end, input, classifications, None)
-230      }</code></pre></figure>
+<figure data-kind="source" data-path="src/lib.rs" data-start="212" data-end="223"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/50afb3efaaa06c2b1c6eb64cc98d5ef41f516213/src/lib.rs#L212-L223">src/lib.rs · lines 212–223</a> · exact source excerpt</figcaption><pre><code>212      pub fn analyze(
+213          &amp;mut self,
+214          source: &amp;mut impl FeedbackSource,
+215          start: DateTime&lt;Utc&gt;,
+216          end: DateTime&lt;Utc&gt;,
+217          classify: impl FnOnce(&amp;[Feedback]) -&gt; Result&lt;Vec&lt;Classification&gt;&gt;,
+218      ) -&gt; Result&lt;Report&gt; {
+219          ensure!(start &lt; end, &quot;interval start must precede end&quot;);
+220          let input = source.read(start, end)?;
+221          let classifications = classify(&amp;input.feedback)?;
+222          self.complete_analysis(start, end, input, classifications, None)
+223      }</code></pre></figure>
 <p><code>&amp;mut self</code> borrows the workflow mutably. <code>source: &amp;mut impl FeedbackSource</code> borrows an object that implements the feedback-source interface. Its <code>read</code> method can update connection state while reading records.</p>
-<figure data-kind="source" data-path="src/postgres_source.rs" data-start="65" data-end="68"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/217ee8f20d7e561a25062331f99dc8fba99a1d59/src/postgres_source.rs#L65-L68">src/postgres_source.rs · lines 65–68</a> · exact source excerpt</figcaption><pre><code> 65  impl FeedbackSource for PostgresSource {
+<figure data-kind="source" data-path="src/postgres_source.rs" data-start="65" data-end="68"><figcaption><a href="https://github.com/SuchintK/ship-signal/blob/50afb3efaaa06c2b1c6eb64cc98d5ef41f516213/src/postgres_source.rs#L65-L68">src/postgres_source.rs · lines 65–68</a> · exact source excerpt</figcaption><pre><code> 65  impl FeedbackSource for PostgresSource {
  66      fn read(&amp;mut self, start: DateTime&lt;Utc&gt;, end: DateTime&lt;Utc&gt;) -&gt; Result&lt;AnalysisInput&gt; {
  67          ensure!(start &lt; end, &quot;interval start must precede end&quot;);
  68          let mut tx = self.client.build_transaction().read_only(true).start()?;</code></pre></figure>
