@@ -58,7 +58,7 @@ impl Workflow {
     ) -> Result<Option<Report>> {
         let deferred: std::collections::BTreeSet<(String, String)> = {
             let mut statement = self.connection.prepare(
-                "SELECT product_id, label FROM need_review_deferrals WHERE report_id = ?1",
+                "SELECT product_id, need FROM need_review_deferrals WHERE report_id = ?1",
             )?;
             let rows = statement.query_map([id], |row| Ok((row.get(0)?, row.get(1)?)))?;
             rows.collect::<rusqlite::Result<_>>()?
@@ -68,15 +68,17 @@ impl Workflow {
             .into_iter()
             .filter(|item| {
                 include_deferred
-                    || !deferred.contains(&(item.product_id.clone(), item.label.clone()))
+                    || !deferred.contains(&(item.product_id.clone(), item.need.clone()))
             })
             .collect();
         writeln!(output, "Report {id}: {} needs to review", queue.len())?;
         for original in queue {
             // Refresh candidates after each decision, including newly created identities.
-            let Some(item) = self.need_review_queue(id)?.into_iter().find(|item| {
-                item.product_id == original.product_id && item.label == original.label
-            }) else {
+            let Some(item) = self
+                .need_review_queue(id)?
+                .into_iter()
+                .find(|item| item.product_id == original.product_id && item.need == original.need)
+            else {
                 continue;
             };
             let suggestion = suggest(&item)?;
@@ -97,7 +99,7 @@ impl Workflow {
                 output,
                 "\nProduct: {}\nNeed: {}\nEvidence: {} messages from {} identified customers",
                 display(&item.product_id),
-                display(&item.label),
+                display(&item.need),
                 item.messages.len(),
                 item.customer_count
             )?;
@@ -131,7 +133,7 @@ impl Workflow {
                     "  {}: {}",
                     display(&candidate.identity),
                     candidate
-                        .labels
+                        .needs
                         .iter()
                         .map(|s| display(s))
                         .collect::<Vec<_>>()
@@ -150,7 +152,7 @@ impl Workflow {
                 match choice.as_str() {
                     "1" => match &suggestion.identity {
                         Some(identity) => {
-                            self.assign_need_identity(&item.product_id, &item.label, identity)?;
+                            self.assign_need_identity(&item.product_id, &item.need, identity)?;
                             break;
                         }
                         None => writeln!(
@@ -170,7 +172,7 @@ impl Workflow {
                             writeln!(output, "Unknown need ID for this product.")?;
                             continue;
                         }
-                        self.assign_need_identity(&item.product_id, &item.label, &identity)?;
+                        self.assign_need_identity(&item.product_id, &item.need, &identity)?;
                         break;
                     }
                     "3" => {
@@ -189,11 +191,11 @@ impl Workflow {
                             )?;
                             continue;
                         }
-                        self.assign_need_identity(&item.product_id, &item.label, &identity)?;
+                        self.assign_need_identity(&item.product_id, &item.need, &identity)?;
                         break;
                     }
                     "4" => {
-                        self.connection.execute("INSERT INTO need_review_deferrals (report_id, product_id, label) VALUES (?1, ?2, ?3) ON CONFLICT DO NOTHING", rusqlite::params![id, item.product_id, item.label])?;
+                        self.connection.execute("INSERT INTO need_review_deferrals (report_id, product_id, need) VALUES (?1, ?2, ?3) ON CONFLICT DO NOTHING", rusqlite::params![id, item.product_id, item.need])?;
                         break;
                     }
                     "q" | "Q" => {

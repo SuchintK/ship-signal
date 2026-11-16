@@ -24,7 +24,7 @@ pub struct Feedback {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Need {
-    pub name: String,
+    pub need: String,
     pub variant: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -47,18 +47,18 @@ pub trait FeedbackSource {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NeedIdentityAlias {
     pub product_id: String,
-    pub label: String,
+    pub need: String,
     pub identity: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NeedCandidate {
     pub identity: String,
-    pub labels: Vec<String>,
+    pub needs: Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NeedReviewItem {
     pub product_id: String,
-    pub label: String,
+    pub need: String,
     pub customer_count: usize,
     pub messages: Vec<String>,
     pub variants: Vec<String>,
@@ -66,7 +66,7 @@ pub struct NeedReviewItem {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NeedReport {
-    pub name: String,
+    pub need: String,
     #[serde(default)]
     pub identity: Option<String>,
     pub customer_count: usize,
@@ -143,7 +143,7 @@ struct ProductDemand {
 }
 #[derive(Default)]
 struct NeedDemand {
-    labels: BTreeSet<String>,
+    need_texts: BTreeSet<String>,
     customers: BTreeSet<String>,
     variants: BTreeSet<String>,
     messages: BTreeSet<usize>,
@@ -155,50 +155,43 @@ pub struct Workflow {
 impl Workflow {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path)?;
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS analysis_reports (id INTEGER PRIMARY KEY, report TEXT NOT NULL); CREATE TABLE IF NOT EXISTS need_identity_aliases (product_id TEXT NOT NULL, label TEXT NOT NULL, identity TEXT NOT NULL, PRIMARY KEY (product_id, label)); CREATE TABLE IF NOT EXISTS need_review_deferrals (report_id INTEGER NOT NULL, product_id TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY (report_id, product_id, label));")?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS analysis_reports (id INTEGER PRIMARY KEY, report TEXT NOT NULL); CREATE TABLE IF NOT EXISTS need_identity_aliases (product_id TEXT NOT NULL, need TEXT NOT NULL, identity TEXT NOT NULL, PRIMARY KEY (product_id, need)); CREATE TABLE IF NOT EXISTS need_review_deferrals (report_id INTEGER NOT NULL, product_id TEXT NOT NULL, need TEXT NOT NULL, PRIMARY KEY (report_id, product_id, need));")?;
         Ok(Self { connection })
     }
-    /// Assign a product-scoped identity to a label after human review.
+    /// Assign a product-scoped identity to a need after human review.
     /// Conflicting assignments fail; corrections require the explicit guarded operation.
-    pub fn assign_need_identity(
-        &self,
-        product_id: &str,
-        label: &str,
-        identity: &str,
-    ) -> Result<()> {
+    pub fn assign_need_identity(&self, product_id: &str, need: &str, identity: &str) -> Result<()> {
         ensure!(
-            !product_id.trim().is_empty()
-                && !label.trim().is_empty()
-                && !identity.trim().is_empty(),
-            "product, label, and identity must be nonempty"
+            !product_id.trim().is_empty() && !need.trim().is_empty() && !identity.trim().is_empty(),
+            "product, need, and identity must be nonempty"
         );
-        self.connection.execute("INSERT INTO need_identity_aliases (product_id, label, identity) VALUES (?1, ?2, ?3) ON CONFLICT(product_id, label) DO NOTHING", params![product_id, label, identity])?;
+        self.connection.execute("INSERT INTO need_identity_aliases (product_id, need, identity) VALUES (?1, ?2, ?3) ON CONFLICT(product_id, need) DO NOTHING", params![product_id, need, identity])?;
         let stored: String = self.connection.query_row(
-            "SELECT identity FROM need_identity_aliases WHERE product_id = ?1 AND label = ?2",
-            params![product_id, label],
+            "SELECT identity FROM need_identity_aliases WHERE product_id = ?1 AND need = ?2",
+            params![product_id, need],
             |row| row.get(0),
         )?;
         ensure!(
             stored == identity,
-            "label already has a different identity; review the existing mapping"
+            "need already has a different identity; review the existing mapping"
         );
         Ok(())
     }
     pub fn correct_need_identity(
         &self,
         product_id: &str,
-        label: &str,
+        need: &str,
         previous: &str,
         identity: &str,
     ) -> Result<()> {
         ensure!(
             !product_id.trim().is_empty()
-                && !label.trim().is_empty()
+                && !need.trim().is_empty()
                 && !previous.trim().is_empty()
                 && !identity.trim().is_empty(),
-            "product, label, previous identity, and identity must be nonempty"
+            "product, need, previous identity, and identity must be nonempty"
         );
-        let count = self.connection.execute("UPDATE need_identity_aliases SET identity = ?1 WHERE product_id = ?2 AND label = ?3 AND identity = ?4", params![identity, product_id, label, previous])?;
+        let count = self.connection.execute("UPDATE need_identity_aliases SET identity = ?1 WHERE product_id = ?2 AND need = ?3 AND identity = ?4", params![identity, product_id, need, previous])?;
         ensure!(
             count == 1,
             "mapping not found or previous identity changed; list mappings and review before retrying"
@@ -206,11 +199,11 @@ impl Workflow {
         Ok(())
     }
     pub fn need_identity_aliases(&self) -> Result<Vec<NeedIdentityAlias>> {
-        let mut statement = self.connection.prepare("SELECT product_id, label, identity FROM need_identity_aliases ORDER BY product_id, label")?;
+        let mut statement = self.connection.prepare("SELECT product_id, need, identity FROM need_identity_aliases ORDER BY product_id, need")?;
         let rows = statement.query_map([], |row| {
             Ok(NeedIdentityAlias {
                 product_id: row.get(0)?,
-                label: row.get(1)?,
+                need: row.get(1)?,
                 identity: row.get(2)?,
             })
         })?;
@@ -228,7 +221,7 @@ impl Workflow {
         let classifications = classify(&input.feedback)?;
         self.complete_analysis(start, end, input, classifications, None)
     }
-    /// List unresolved labels from saved evidence and product-scoped confirmed identities.
+    /// List unresolved needs from saved evidence and product-scoped confirmed identities.
     pub fn need_review_queue(&self, id: i64) -> Result<Vec<NeedReviewItem>> {
         let report = self.report(id)?;
         let aliases = self.need_identity_aliases()?;
@@ -242,20 +235,20 @@ impl Workflow {
                 candidates
                     .entry(alias.identity.clone())
                     .or_default()
-                    .push(alias.label.clone());
+                    .push(alias.need.clone());
             }
             let candidates: Vec<NeedCandidate> = candidates
                 .into_iter()
-                .map(|(identity, labels)| NeedCandidate { identity, labels })
+                .map(|(identity, needs)| NeedCandidate { identity, needs })
                 .collect();
-            for need in product.needs.iter().filter(|n| n.identity.is_none()) {
+            for report_need in product.needs.iter().filter(|n| n.identity.is_none()) {
                 if aliases
                     .iter()
-                    .any(|a| a.product_id == product.product_id && a.label == need.name)
+                    .any(|a| a.product_id == product.product_id && a.need == report_need.need)
                 {
                     continue;
                 }
-                let messages = need
+                let messages = report_need
                     .message_indices
                     .iter()
                     .map(|&i| {
@@ -269,10 +262,10 @@ impl Workflow {
                     .collect::<Result<Vec<_>>>()?;
                 result.push(NeedReviewItem {
                     product_id: product.product_id.clone(),
-                    label: need.name.clone(),
-                    customer_count: need.customer_count,
+                    need: report_need.need.clone(),
+                    customer_count: report_need.customer_count,
                     messages,
-                    variants: need.variants.clone(),
+                    variants: report_need.variants.clone(),
                     candidates: candidates.clone(),
                 });
             }
@@ -308,13 +301,16 @@ impl Workflow {
                 classification.message_index == i,
                 "classifier returned missing, duplicate, or invalid message index"
             );
-            for need in &classification.needs {
+            for request in &classification.needs {
                 ensure!(
-                    !need.name.trim().is_empty(),
-                    "classifier returned an empty need name"
+                    !request.need.trim().is_empty(),
+                    "classifier returned an empty need"
                 );
                 ensure!(
-                    need.variant.as_ref().is_none_or(|v| !v.trim().is_empty()),
+                    request
+                        .variant
+                        .as_ref()
+                        .is_none_or(|v| !v.trim().is_empty()),
                     "classifier returned an empty variant"
                 );
             }
@@ -322,7 +318,7 @@ impl Workflow {
         let aliases: BTreeMap<(String, String), String> = {
             let mut statement = self
                 .connection
-                .prepare("SELECT product_id, label, identity FROM need_identity_aliases")?;
+                .prepare("SELECT product_id, need, identity FROM need_identity_aliases")?;
             let rows =
                 statement.query_map([], |row| Ok(((row.get(0)?, row.get(1)?), row.get(2)?)))?;
             rows.collect::<rusqlite::Result<_>>()?
@@ -335,18 +331,18 @@ impl Workflow {
                     product.customers.insert(customer.clone());
                 }
             }
-            for need in &classification.needs {
-                let identity = aliases.get(&(row.product_id.clone(), need.name.clone()));
+            for request in &classification.needs {
+                let identity = aliases.get(&(row.product_id.clone(), request.need.clone()));
                 let key = match identity {
                     Some(identity) => GroupKey::Mapped(identity.clone()),
-                    None => GroupKey::Unresolved(need.name.clone()),
+                    None => GroupKey::Unresolved(request.need.clone()),
                 };
                 let group = product.needs.entry(key).or_default();
-                group.labels.insert(need.name.clone());
+                group.need_texts.insert(request.need.clone());
                 if let Some(customer) = &row.customer_id {
                     group.customers.insert(customer.clone());
                 }
-                if let Some(variant) = &need.variant {
+                if let Some(variant) = &request.variant {
                     group.variants.insert(variant.clone());
                 }
                 group.messages.insert(classification.message_index);
@@ -363,11 +359,12 @@ impl Workflow {
                 let needs = product
                     .needs
                     .into_iter()
-                    .map(|(key, need)| {
-                        let name = need.labels.iter().next().cloned().unwrap_or_default();
-                        let count = need.customers.len();
+                    .map(|(key, demand)| {
+                        let need_text =
+                            demand.need_texts.iter().next().cloned().unwrap_or_default();
+                        let count = demand.customers.len();
                         NeedReport {
-                            name,
+                            need: need_text,
                             identity: match key {
                                 GroupKey::Mapped(identity) => Some(identity),
                                 GroupKey::Unresolved(_) => None,
@@ -379,8 +376,8 @@ impl Workflow {
                                 100.0 * count as f64 / denominator as f64
                             },
                             qualifies: denominator > 0 && count > denominator / 4,
-                            variants: need.variants.into_iter().collect(),
-                            message_indices: need.messages.into_iter().collect(),
+                            variants: demand.variants.into_iter().collect(),
+                            message_indices: demand.messages.into_iter().collect(),
                         }
                     })
                     .collect();

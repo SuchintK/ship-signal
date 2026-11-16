@@ -59,15 +59,15 @@ fn workflow_saves_a_report_from_real_postgresql() -> anyhow::Result<()> {
                     message_index,
                     needs: match row.source_message_id.as_str() {
                         "1" | "2" | "5" => vec![Need {
-                            name: "export".into(),
+                            need: "export".into(),
                             variant: Some("CSV".into()),
                         }],
                         "3" => vec![Need {
-                            name: "export".into(),
+                            need: "export".into(),
                             variant: Some("PDF".into()),
                         }],
                         "4" => vec![Need {
-                            name: "dark mode".into(),
+                            need: "dark mode".into(),
                             variant: None,
                         }],
                         _ => vec![],
@@ -80,7 +80,7 @@ fn workflow_saves_a_report_from_real_postgresql() -> anyhow::Result<()> {
     let export = report.products[0]
         .needs
         .iter()
-        .find(|need| need.name == "export")
+        .find(|need| need.need == "export")
         .unwrap();
     assert_eq!(export.customer_count, 2);
     assert_eq!(export.message_indices.len(), 4);

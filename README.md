@@ -54,7 +54,7 @@ The interval is start-inclusive and end-exclusive. Only product IDs and message 
 
 ### Need identity across reports
 
-The review queue asks the configured analysis model to suggest a match for each unresolved label. For each suggestion, it shows the candidate identities, supporting messages, requested variants, and distinct-customer count. A person confirms an existing match, chooses a different one, creates a new need ID, or leaves the label unresolved:
+The review queue asks the configured analysis model to suggest a match for each unresolved need. For each suggestion, it shows the candidate identities, supporting messages, requested variants, and distinct-customer count. A person confirms an existing match, chooses a different one, creates a new need ID, or leaves the need unresolved:
 
 ```sh
 export OPENAI_API_KEY='your-key'
@@ -62,19 +62,19 @@ export SHIP_SIGNAL_ANALYSIS_MODEL='your-qualified-model'
 cargo run -- review-needs --state ./ship-signal.sqlite --report 1
 ```
 
-Suggestions are never saved as mappings without a person choosing an action. Confirmed mappings and deferrals are saved as they are made; quit with `q` and run the same command to resume. Add `--include-deferred` to revisit labels previously left unresolved for that report. Once the queue has been reviewed, the command saves a separate report from the original feedback and classifications. The original report is unchanged. Deferred labels remain unresolved. For match suggestions the model receives the product ID, need label, candidate IDs and labels, supporting feedback text, variants, and the distinct-customer count. Feedback may contain personal information. Choose and qualify the model for the task before production use.
+Suggestions are never saved as mappings without a person choosing an action. Confirmed mappings and deferrals are saved as they are made; quit with `q` and run the same command to resume. Add `--include-deferred` to revisit needs previously left unresolved for that report. Once the queue has been reviewed, the command saves a separate report from the original feedback and classifications. The original report is unchanged. Deferred needs remain unresolved. For match suggestions the model receives the product ID, need text, candidate IDs and their mapped needs, supporting feedback text, variants, and the distinct-customer count. Feedback may contain personal information. Choose and qualify the model for the task before production use.
 
 The working identity policy is an implementation choice, not an accepted architectural decision. Each stable ID identifies an underlying need within one product. Direct mappings are also available:
 
 ```sh
-cargo run -- map-need --state ./ship-signal.sqlite --product demo-shop --label 'CSV export' --identity export-data
+cargo run -- map-need --state ./ship-signal.sqlite --product demo-shop --need 'CSV export' --identity export-data
 cargo run -- need-identities --state ./ship-signal.sqlite
 cargo run -- review-report --state ./ship-signal.sqlite 1
 ```
 
-Labels match exactly and are case-sensitive. Analysis combines labels mapped to the same ID for the same product while retaining the original classifications, variants, and messages. Labels with no mapping have `"identity": null`; a product with any unresolved labels has `"needs_identity_review": true`. Its grouping and demand are provisional, so review and map its labels before using its results for ticket decisions. Review is required even when an individual group exceeds the threshold: another label could belong to the same need.
+Need text is matched exactly and is case-sensitive. Analysis combines differently worded needs mapped to the same ID for the same product while retaining the original classifications, variants, and messages. Needs with no mapping have `"identity": null`; a product with any unresolved needs has `"needs_identity_review": true`. Its grouping and demand are provisional, so review and map its needs before using its results for ticket decisions. Review is required even when an individual group exceeds the threshold: another request could describe the same need.
 
-After mapping labels, `review-report` creates a separate report from the saved feedback and classifications using the current mappings. It does not read the feedback source or call the model; `reviewed_from` identifies the original report. The original remains unchanged. To correct a mapping, run `map-need` with the current ID in `--previous-identity` and the corrected ID in `--identity`; the command fails if the current mapping has changed. Review the affected reports again as needed. The ID is not an implementation scope or a cooldown match. Earlier reports remain readable; those made before identity review was implemented are conservatively marked as requiring review. Ticket matching and cooldown similarity still require their own decisions in SUC-21 and SUC-22.
+After mapping needs, `review-report` creates a separate report from the saved feedback and classifications using the current mappings. It does not read the feedback source or call the model; `reviewed_from` identifies the original report. The original remains unchanged. To correct a mapping, run `map-need` with the current ID in `--previous-identity` and the corrected ID in `--identity`; the command fails if the current mapping has changed. Review the affected reports again as needed. The ID is not an implementation scope or a cooldown match. Ticket matching and cooldown similarity still require their own decisions in SUC-21 and SUC-22.
 
 ## Synthetic feedback database
 
@@ -88,3 +88,5 @@ psql -h 127.0.0.1 -p 55439 -d ship_signal_feedback -v ON_ERROR_STOP=1 -f fixture
 ```
 
 This example uses trust authentication and is only for local development. The fixture explicitly maps its source timestamps from UTC. To run connector tests, also load `fixtures/test_invalid.sql` and set `SHIP_SIGNAL_TEST_POSTGRES` to the example reader URL. The connector tests are marked ignored by default. Run them explicitly with `cargo test --test postgres -- --ignored`; run the remaining suite with `cargo test`.
+
+The current development schema uses `need` consistently in classification/report JSON, mapping and deferral columns, and `map-need --need`. It expects a fresh SQLite state file; no migration or old-field aliases are provided for the earlier `name`/`label` format.

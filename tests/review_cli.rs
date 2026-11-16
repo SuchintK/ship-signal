@@ -38,7 +38,7 @@ fn cli_shows_model_suggestion_and_saves_only_a_confirmed_match() -> anyhow::Resu
             Ok(vec![Classification {
                 message_index: 0,
                 needs: vec![Need {
-                    name: "CSV download".into(),
+                    need: "CSV download".into(),
                     variant: Some("CSV".into()),
                 }],
             }])
@@ -133,5 +133,41 @@ fn cli_shows_model_suggestion_and_saves_only_a_confirmed_match() -> anyhow::Resu
     let workflow = Workflow::open(&path)?;
     assert!(workflow.need_review_queue(report.id)?.is_empty());
     assert_eq!(workflow.report(report.id)?, report);
+    Ok(())
+}
+
+#[test]
+fn cli_maps_and_lists_an_explicit_need() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("state.sqlite");
+    let output = Command::new(env!("CARGO_BIN_EXE_ship-signal"))
+        .args([
+            "map-need",
+            "--state",
+            path.to_str().unwrap(),
+            "--product",
+            "shop",
+            "--need",
+            "Export orders",
+            "--identity",
+            "export-orders",
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_ship-signal"))
+        .args(["need-identities", "--state", path.to_str().unwrap()])
+        .output()?;
+    assert!(output.status.success());
+    let mappings: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        mappings,
+        serde_json::json!([
+            {"product_id":"shop", "need":"Export orders", "identity":"export-orders"}
+        ])
+    );
     Ok(())
 }

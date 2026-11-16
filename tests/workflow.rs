@@ -36,7 +36,7 @@ fn completed_report_survives_changed_source_and_classifier() -> anyhow::Result<(
             Ok(vec![Classification {
                 message_index: 0,
                 needs: vec![Need {
-                    name: "export".into(),
+                    need: "export".into(),
                     variant: Some("CSV".into()),
                 }],
             }])
@@ -88,8 +88,8 @@ fn counts_distinct_customers_per_product_and_preserves_variant_evidence() -> any
                     message_index,
                     needs: needs
                         .into_iter()
-                        .map(|(name, variant)| Need {
-                            name: name.into(),
+                        .map(|(need_text, variant)| Need {
+                            need: need_text.into(),
                             variant: variant.map(str::to_string),
                         })
                         .collect(),
@@ -99,7 +99,7 @@ fn counts_distinct_customers_per_product_and_preserves_variant_evidence() -> any
     )?;
     let product = &report.products[0];
     assert_eq!(product.denominator, 4);
-    let export = product.needs.iter().find(|n| n.name == "export").unwrap();
+    let export = product.needs.iter().find(|n| n.need == "export").unwrap();
     assert_eq!(
         (export.customer_count, export.percentage, export.qualifies),
         (2, 50.0, true)
@@ -109,7 +109,7 @@ fn counts_distinct_customers_per_product_and_preserves_variant_evidence() -> any
     let dark = product
         .needs
         .iter()
-        .find(|n| n.name == "dark mode")
+        .find(|n| n.need == "dark mode")
         .unwrap();
     assert_eq!(
         (dark.customer_count, dark.percentage, dark.qualifies),
@@ -139,7 +139,7 @@ fn unidentified_and_bug_only_feedback_cannot_qualify() -> anyhow::Result<()> {
                 Classification {
                     message_index: 1,
                     needs: vec![Need {
-                        name: "export".into(),
+                        need: "export".into(),
                         variant: None,
                     }],
                 },
@@ -152,18 +152,18 @@ fn unidentified_and_bug_only_feedback_cannot_qualify() -> anyhow::Result<()> {
 }
 
 #[test]
-fn confirmed_need_identity_connects_labels_across_reports_without_changing_old_evidence()
+fn confirmed_need_identity_connects_needs_across_reports_without_changing_old_evidence()
 -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("state.sqlite");
     let mut workflow = Workflow::open(&path)?;
     let mut source = Source(vec![feedback("first", Some("alice"))]);
-    let classify = |name: &'static str| {
+    let classify = |need_text: &'static str| {
         move |_: &[Feedback]| {
             Ok(vec![Classification {
                 message_index: 0,
                 needs: vec![Need {
-                    name: name.into(),
+                    need: need_text.into(),
                     variant: Some("CSV".into()),
                 }],
             }])
@@ -231,21 +231,21 @@ fn confirmed_aliases_combine_demand_only_within_the_same_product() -> anyhow::Re
                 Classification {
                     message_index: 0,
                     needs: vec![Need {
-                        name: "CSV export".into(),
+                        need: "CSV export".into(),
                         variant: Some("CSV".into()),
                     }],
                 },
                 Classification {
                     message_index: 1,
                     needs: vec![Need {
-                        name: "download data as CSV".into(),
+                        need: "download data as CSV".into(),
                         variant: Some("CSV".into()),
                     }],
                 },
                 Classification {
                     message_index: 2,
                     needs: vec![Need {
-                        name: "CSV export".into(),
+                        need: "CSV export".into(),
                         variant: None,
                     }],
                 },
@@ -280,7 +280,7 @@ fn explicit_identity_correction_changes_future_analyses_without_rewriting_histor
         Ok(vec![Classification {
             message_index: 0,
             needs: vec![Need {
-                name: "CSV export".into(),
+                need: "CSV export".into(),
                 variant: None,
             }],
         }])
@@ -330,14 +330,14 @@ fn reviewed_report_recalculates_saved_classifications_after_mapping_without_rewr
                 Classification {
                     message_index: 0,
                     needs: vec![Need {
-                        name: "CSV export".into(),
+                        need: "CSV export".into(),
                         variant: Some("CSV".into()),
                     }],
                 },
                 Classification {
                     message_index: 1,
                     needs: vec![Need {
-                        name: "download CSV".into(),
+                        need: "download CSV".into(),
                         variant: Some("CSV".into()),
                     }],
                 },
@@ -381,14 +381,14 @@ fn review_queue_shows_unresolved_needs_with_evidence_and_confirmed_candidates() 
                 Classification {
                     message_index: 0,
                     needs: vec![Need {
-                        name: "CSV download".into(),
+                        need: "CSV download".into(),
                         variant: Some("CSV".into()),
                     }],
                 },
                 Classification {
                     message_index: 1,
                     needs: vec![Need {
-                        name: "CSV download".into(),
+                        need: "CSV download".into(),
                         variant: Some("CSV".into()),
                     }],
                 },
@@ -398,7 +398,7 @@ fn review_queue_shows_unresolved_needs_with_evidence_and_confirmed_candidates() 
     let queue = workflow.need_review_queue(report.id)?;
     assert_eq!(queue.len(), 1);
     assert_eq!(queue[0].product_id, "shop");
-    assert_eq!(queue[0].label, "CSV download");
+    assert_eq!(queue[0].need, "CSV download");
     assert_eq!(queue[0].customer_count, 1);
     assert_eq!(
         queue[0].messages,
@@ -435,14 +435,14 @@ fn interactive_review_confirms_suggestions_and_keeps_deferred_needs_unresolved()
                 Classification {
                     message_index: 0,
                     needs: vec![Need {
-                        name: "CSV download".into(),
+                        need: "CSV download".into(),
                         variant: Some("CSV".into()),
                     }],
                 },
                 Classification {
                     message_index: 1,
                     needs: vec![Need {
-                        name: "Dark mode".into(),
+                        need: "Dark mode".into(),
                         variant: None,
                     }],
                 },
@@ -476,7 +476,7 @@ fn interactive_review_confirms_suggestions_and_keeps_deferred_needs_unresolved()
         reviewed.products[0]
             .needs
             .iter()
-            .any(|n| n.identity.is_none() && n.name == "Dark mode")
+            .any(|n| n.identity.is_none() && n.need == "Dark mode")
     );
     assert_eq!(workflow.report(original.id)?, original);
     Ok(())
@@ -500,14 +500,14 @@ fn quitting_review_saves_only_confirmed_decisions_and_can_resume() -> anyhow::Re
                 Classification {
                     message_index: 0,
                     needs: vec![Need {
-                        name: "Alpha".into(),
+                        need: "Alpha".into(),
                         variant: None,
                     }],
                 },
                 Classification {
                     message_index: 1,
                     needs: vec![Need {
-                        name: "Beta".into(),
+                        need: "Beta".into(),
                         variant: None,
                     }],
                 },
@@ -565,7 +565,7 @@ fn invalid_model_identity_cannot_write_a_mapping() -> anyhow::Result<()> {
             Ok(vec![Classification {
                 message_index: 0,
                 needs: vec![Need {
-                    name: "Export".into(),
+                    need: "Export".into(),
                     variant: None,
                 }],
             }])
@@ -609,14 +609,14 @@ fn deferred_decisions_survive_quit_and_can_be_explicitly_reopened() -> anyhow::R
                 Classification {
                     message_index: 0,
                     needs: vec![Need {
-                        name: "Alpha".into(),
+                        need: "Alpha".into(),
                         variant: None,
                     }],
                 },
                 Classification {
                     message_index: 1,
                     needs: vec![Need {
-                        name: "Beta".into(),
+                        need: "Beta".into(),
                         variant: None,
                     }],
                 },
@@ -650,7 +650,7 @@ fn deferred_decisions_survive_quit_and_can_be_explicitly_reopened() -> anyhow::R
             &mut Vec::new(),
             false,
             |item| {
-                assert_eq!(item.label, "Beta");
+                assert_eq!(item.need, "Beta");
                 Ok(NeedSuggestion {
                     kind: SuggestionKind::New,
                     identity: None,
@@ -667,7 +667,7 @@ fn deferred_decisions_survive_quit_and_can_be_explicitly_reopened() -> anyhow::R
             &mut Vec::new(),
             true,
             |item| {
-                assert_eq!(item.label, "Alpha");
+                assert_eq!(item.need, "Alpha");
                 Ok(NeedSuggestion {
                     kind: SuggestionKind::New,
                     identity: None,
@@ -730,7 +730,7 @@ fn saves_and_reopens_report_when_existing_reports_are_write_once() -> anyhow::Re
             Ok(vec![Classification {
                 message_index: 0,
                 needs: vec![Need {
-                    name: "export".into(),
+                    need: "export".into(),
                     variant: None,
                 }],
             }])
@@ -739,5 +739,43 @@ fn saves_and_reopens_report_when_existing_reports_are_write_once() -> anyhow::Re
     assert!(report.id > 0);
     drop(workflow);
     assert_eq!(Workflow::open(&path)?.report(report.id)?, report);
+    Ok(())
+}
+
+#[test]
+fn reports_and_review_inputs_use_need_consistently() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut workflow = Workflow::open(dir.path().join("state.sqlite"))?;
+    workflow.assign_need_identity("shop", "Export orders", "export-orders")?;
+    let report = workflow.analyze(
+        &mut Source(vec![feedback("request", Some("alice"))]),
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| {
+            Ok(vec![Classification {
+                message_index: 0,
+                needs: vec![Need {
+                    need: "Download orders".into(),
+                    variant: Some("CSV".into()),
+                }],
+            }])
+        },
+    )?;
+    let json = serde_json::to_value(&report)?;
+    assert_eq!(
+        json["classifications"][0]["needs"][0]["need"],
+        "Download orders"
+    );
+    assert!(json["classifications"][0]["needs"][0].get("name").is_none());
+    assert_eq!(json["products"][0]["needs"][0]["need"], "Download orders");
+    let queue = serde_json::to_value(workflow.need_review_queue(report.id)?)?;
+    assert_eq!(queue[0]["need"], "Download orders");
+    assert_eq!(
+        queue[0]["candidates"][0]["needs"],
+        serde_json::json!(["Export orders"])
+    );
+    let mappings = serde_json::to_value(workflow.need_identity_aliases()?)?;
+    assert_eq!(mappings[0]["need"], "Export orders");
+    assert!(mappings[0].get("label").is_none());
     Ok(())
 }
