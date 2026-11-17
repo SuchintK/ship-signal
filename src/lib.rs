@@ -359,10 +359,10 @@ impl Workflow {
         // zip doesn't match using message_index. That is why the earlier code first sorts
         // classifications by index and validates their count and indices.
         for (row, classification) in input.feedback.iter().zip(&classifications) {
-            if !classification.needs.is_empty() {
-                if let Some(customer) = &row.customer_id {
-                    product.customers.insert(customer.clone());
-                }
+            if !classification.needs.is_empty()
+                && let Some(customer) = &row.customer_id
+            {
+                product.customers.insert(customer.clone());
             }
             for request in &classification.needs {
                 let identity = aliases
