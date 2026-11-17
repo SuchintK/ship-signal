@@ -125,7 +125,7 @@ aside nav{display:block}.toc,.toc-sub{list-style:none;padding:0;margin:0;display
 </ul>
 </nav></aside><main>
 <header class="hero"><div class="eyebrow">Code walkthrough · PR #1</div><h1>From feedback<br>to reviewed demand.</h1><p class="intro">Follow one selected product’s data from a PostgreSQL message to a saved report, a human-confirmed need identity, and a separately reviewed demand result.</p>
-<div class="meta"><span>Analyzed source SHA: 2c90166cdcb93664ea793d5df658becc78433fdb</span><span>Base SHA: 5322a1d76a53fd0b9142a14ebd350ffdabfacff8</span></div>
+<div class="meta"><span>Analyzed source SHA: d1c3820ea32c1e365d0d3a4f5c15cabd28e02c48</span><span>Base SHA: 5322a1d76a53fd0b9142a14ebd350ffdabfacff8</span></div>
 <p><strong>Before:</strong> the base contains product design and Rust-concepts documentation, but no Rust feedback-analysis application. <strong>After:</strong> this branch adds the CLI, PostgreSQL connector, SQLite reports, and model-assisted identity review. This walkthrough describes the exact source commit above; its own generated artifact is excluded from the code analysis.</p></header>
 <section id="overview"><div class="section-head"><span class="step">01</span><h2>Start here: the complete workflow</h2></div>
 <p>Ship Signal reads customer feedback, identifies explicit feature requests, measures demand, and lets a person decide which requests describe the same underlying need. This PR implements that analysis and identity-review slice. It does not implement the whole feedback-to-ticket-to-PR product.</p>
@@ -223,7 +223,7 @@ cargo run -- report --product fitness-app --state /data/fitness/ship-signal.sqli
 <p>Remaining rows become <code>AnalysisInput.feedback</code>. The report saves those valid messages and the diagnostics; it does not copy complete excluded raw rows.</p>
 </section><section id="classify"><div class="section-head"><span class="step">04</span><h2>Classify messages and validate the result</h2></div>
 <p>A classification answers “what explicit feature requests does this message contain?” It is not a demand count. The workflow reads the source once, invokes the supplied classifier, and passes both the inputs and classifications to the shared calculation.</p>
-<figure data-source="src/lib.rs" data-start="235" data-end="256"><figcaption>src/lib.rs · lines 235–256 <span>exact source excerpt</span></figcaption><pre><code>235      pub fn analyze(
+<figure data-source="src/lib.rs" data-start="235" data-end="257"><figcaption>src/lib.rs · lines 235–257 <span>exact source excerpt</span></figcaption><pre><code>235      pub fn analyze(
 236          &amp;mut self,
 237          product_id: &amp;str,
 238          source: &amp;mut impl FeedbackSource,
@@ -242,9 +242,10 @@ cargo run -- report --product fitness-app --state /data/fitness/ship-signal.sqli
 251                  .all(|row| row.product_id == product_id),
 252              &quot;feedback source returned rows outside the requested product&quot;
 253          );
-254          let classifications = classify(&amp;input.feedback)?;
-255          self.complete_analysis(product_id, start, end, input, classifications, None)
-256      }</code></pre></figure>
+254          // Classify the feedback
+255          let classifications = classify(&amp;input.feedback)?;
+256          self.complete_analysis(product_id, start, end, input, classifications, None)
+257      }</code></pre></figure>
 <h3 id="explicit-requests">Explicit requests, underlying needs, and variants</h3>
 <div class="table-wrap"><table><thead><tr><th>Message</th><th>Illustrative classification</th></tr></thead><tbody><tr><td>“Please let me download my orders as CSV.”</td><td>Underlying need text <code>Export orders</code>; variant <code>CSV</code>.</td></tr><tr><td>“Please add PDF downloads of my orders.”</td><td>The same underlying need text, with variant <code>PDF</code>.</td></tr><tr><td>“Checkout crashes.”</td><td>No explicit feature request: <code>needs: []</code>.</td></tr><tr><td>“I couldn’t find a way to download my orders.”</td><td>May suggest a need but does not directly request a feature. The prompt tells the classifier to exclude inferred needs.</td></tr></tbody></table></div>
 <p>The first two requests share a customer goal while retaining different requested behavior. The classifier prompt asks for identical concise need text for related needs, but this is not a guarantee that the model will classify or name every message correctly.</p>
@@ -330,30 +331,30 @@ cargo run -- report --product fitness-app --state /data/fitness/ship-signal.sqli
 118  - variant: a nonblank string naming an explicitly requested option, such as &quot;CSV&quot;, &quot;PDF&quot;, &quot;Email&quot;, or &quot;SMS&quot;; otherwise JSON null. Preserve conventional acronym casing. Do not guess a variant, use an empty string, or write the string &quot;null&quot;. If a message explicitly requests multiple variants of one need, return one entry per variant with the same need.
 119  Use needs: [] when there is no explicit feature request. Do not add Markdown or commentary.&quot;#;</code></pre></figure>
 <h3 id="classification-validation">Why check length before sorting? Why validate an optional variant?</h3>
-<figure data-source="src/lib.rs" data-start="332" data-end="355"><figcaption>src/lib.rs · lines 332–355 <span>exact source excerpt</span></figcaption><pre><code>332          ensure!(
-333              classifications.len() == input.feedback.len(),
-334              &quot;classifier must return one classification per message&quot;
-335          );
-336          classifications.sort_by_key(|c| c.message_index);
-337          for (i, classification) in classifications.iter().enumerate() {
-338              ensure!(
-339                  classification.message_index == i,
-340                  &quot;classifier returned missing, duplicate, or invalid message index&quot;
-341              );
-342              for request in &amp;classification.needs {
-343                  ensure!(
-344                      !request.need.trim().is_empty(),
-345                      &quot;classifier returned an empty need&quot;
-346                  );
-347                  ensure!(
-348                      request
-349                          .variant
-350                          .as_ref()
-351                          .is_none_or(|v| !v.trim().is_empty()),
-352                      &quot;classifier returned an empty variant&quot;
-353                  );
-354              }
-355          }</code></pre></figure>
+<figure data-source="src/lib.rs" data-start="333" data-end="356"><figcaption>src/lib.rs · lines 333–356 <span>exact source excerpt</span></figcaption><pre><code>333          ensure!(
+334              classifications.len() == input.feedback.len(),
+335              &quot;classifier must return one classification per message&quot;
+336          );
+337          classifications.sort_by_key(|c| c.message_index);
+338          for (i, classification) in classifications.iter().enumerate() {
+339              ensure!(
+340                  classification.message_index == i,
+341                  &quot;classifier returned missing, duplicate, or invalid message index&quot;
+342              );
+343              for request in &amp;classification.needs {
+344                  ensure!(
+345                      !request.need.trim().is_empty(),
+346                      &quot;classifier returned an empty need&quot;
+347                  );
+348                  ensure!(
+349                      request
+350                          .variant
+351                          .as_ref()
+352                          .is_none_or(|v| !v.trim().is_empty()),
+353                      &quot;classifier returned an empty variant&quot;
+354                  );
+355              }
+356          }</code></pre></figure>
 <p>The length check rejects a missing or extra classification before spending time sorting. Sorting only reorders the vector; it does not shrink it or remove duplicates. After sorting by <code>message_index</code>, the index check requires exactly one classification for each input position, starting at zero.</p>
 <p>The need text must contain non-whitespace text. A variant may be absent (<code>null</code> in JSON), but if present it must contain non-whitespace text. For example, no variant and <code>CSV</code> are accepted; <code>""</code> or <code>"   "</code> are rejected. This prevents blank needs or variants entering the report. These checks validate structure, not the model’s interpretation of the customer’s request.</p>
 </section><section id="demand"><div class="section-head"><span class="step">05</span><h2>Resolve identities and calculate demand</h2></div>
@@ -376,73 +377,73 @@ cargo run -- report --product fitness-app --state /data/fitness/ship-signal.sqli
 234      }</code></pre></figure><p>This is Unicode lowercasing, not full Unicode case folding: for example, <code>ÉDITER</code> and <code>éditer</code> match, while <code>Straße</code> and <code>STRASSE</code> remain different. Spaces, punctuation, and synonyms are not normalized. Product IDs and identity IDs stay case-sensitive. Without a confirmed mapping, differently cased needs may still be separate unresolved groups. If an external database edit introduces case-equivalent alias rows, the index returns an error rather than choosing an arbitrary mapping.</p>
 <h3 id="identity-lookup">Does Analyze assign an identity?</h3>
 <p><strong>Analyze reuses an existing confirmed identity; it does not create a new one.</strong> It loads the selected product’s confirmed mappings into the lowercase-key index and looks up <code>request.need.to_lowercase()</code>. If nothing matches, it groups by the unresolved need and saves <code>identity: null</code>. “Unmatched” refers to that need having no saved mapping.</p>
-<figure data-source="src/lib.rs" data-start="356" data-end="383"><figcaption>src/lib.rs · lines 356–383 <span>exact source excerpt</span></figcaption><pre><code>356          let aliases = self.need_identity_index(product_id)?;
-357          let mut product = ProductDemand::default();
-358          // zip doesn&#x27;t match using message_index. That is why the earlier code first sorts
-359          // classifications by index and validates their count and indices.
-360          for (row, classification) in input.feedback.iter().zip(&amp;classifications) {
-361              if !classification.needs.is_empty() {
-362                  if let Some(customer) = &amp;row.customer_id {
-363                      product.customers.insert(customer.clone());
-364                  }
-365              }
-366              for request in &amp;classification.needs {
-367                  let identity = aliases
-368                      .get(&amp;request.need.to_lowercase())
-369                      .map(|alias| &amp;alias.identity);
-370                  let key = match identity {
-371                      Some(identity) =&gt; GroupKey::Mapped(identity.clone()),
-372                      None =&gt; GroupKey::Unresolved(request.need.clone()),
-373                  };
-374                  let group = product.needs.entry(key).or_default();
-375                  group.need_texts.insert(request.need.clone());
-376                  if let Some(customer) = &amp;row.customer_id {
-377                      group.customers.insert(customer.clone());
-378                  }
-379                  if let Some(variant) = &amp;request.variant {
-380                      group.variants.insert(variant.clone());
-381                  }
-382                  group.messages.insert(classification.message_index);
-383              }</code></pre></figure>
+<figure data-source="src/lib.rs" data-start="357" data-end="384"><figcaption>src/lib.rs · lines 357–384 <span>exact source excerpt</span></figcaption><pre><code>357          let aliases = self.need_identity_index(product_id)?;
+358          let mut product = ProductDemand::default();
+359          // zip doesn&#x27;t match using message_index. That is why the earlier code first sorts
+360          // classifications by index and validates their count and indices.
+361          for (row, classification) in input.feedback.iter().zip(&amp;classifications) {
+362              if !classification.needs.is_empty() {
+363                  if let Some(customer) = &amp;row.customer_id {
+364                      product.customers.insert(customer.clone());
+365                  }
+366              }
+367              for request in &amp;classification.needs {
+368                  let identity = aliases
+369                      .get(&amp;request.need.to_lowercase())
+370                      .map(|alias| &amp;alias.identity);
+371                  let key = match identity {
+372                      Some(identity) =&gt; GroupKey::Mapped(identity.clone()),
+373                      None =&gt; GroupKey::Unresolved(request.need.clone()),
+374                  };
+375                  let group = product.needs.entry(key).or_default();
+376                  group.need_texts.insert(request.need.clone());
+377                  if let Some(customer) = &amp;row.customer_id {
+378                      group.customers.insert(customer.clone());
+379                  }
+380                  if let Some(variant) = &amp;request.variant {
+381                      group.variants.insert(variant.clone());
+382                  }
+383                  group.messages.insert(classification.message_index);
+384              }</code></pre></figure>
 <p>On a fresh installation the alias table is empty, so all classified needs begin without identities. A previously confirmed <code>Export orders → export-orders</code> mapping can be reused in a later analysis; a new wording such as <code>Download orders</code> still needs review even if it means the same thing.</p>
 <h3 id="demand-math">What are demand results?</h3>
 <p><code>complete_analysis</code> creates one <code>ProductDemand::default()</code> accumulator for the selected product. Every feedback row updates that accumulator directly; an outer map keyed by product ID is no longer needed. The inner <code>product.needs</code> map still groups the product’s many needs. Rust then builds one <code>ProductReport</code>, keeping the existing <code>products</code> array with exactly one entry, even when there is no feedback.</p>
 <p>For the selected product, Rust counts distinct identified customers requesting each grouped need. The denominator is the distinct identified customers who requested any feature in that interval. A customer requesting two needs counts once in each numerator and once in the denominator; repeated messages do not increase that person’s count.</p>
-<figure data-source="src/lib.rs" data-start="385" data-end="419"><figcaption>src/lib.rs · lines 385–419 <span>exact source excerpt</span></figcaption><pre><code>385          let denominator = product.customers.len();
-386          let needs_identity_review = product
-387              .needs
-388              .keys()
-389              .any(|key| matches!(key, GroupKey::Unresolved(_)));
-390          let needs = product
-391              .needs
-392              .into_iter()
-393              .map(|(key, demand)| {
-394                  let need_text = demand.need_texts.iter().next().cloned().unwrap_or_default();
-395                  let count = demand.customers.len();
-396                  NeedReport {
-397                      need: need_text,
-398                      identity: match key {
-399                          GroupKey::Mapped(identity) =&gt; Some(identity),
-400                          GroupKey::Unresolved(_) =&gt; None,
-401                      },
-402                      customer_count: count,
-403                      percentage: if denominator == 0 {
-404                          0.0
-405                      } else {
-406                          100.0 * count as f64 / denominator as f64
-407                      },
-408                      qualifies: denominator &gt; 0 &amp;&amp; count &gt; denominator / 4,
-409                      variants: demand.variants.into_iter().collect(),
-410                      message_indices: demand.messages.into_iter().collect(),
-411                  }
-412              })
-413              .collect();
-414          let products = vec![ProductReport {
-415              product_id: product_id.to_owned(),
-416              denominator,
-417              needs_identity_review,
-418              needs,
-419          }];</code></pre></figure>
+<figure data-source="src/lib.rs" data-start="386" data-end="420"><figcaption>src/lib.rs · lines 386–420 <span>exact source excerpt</span></figcaption><pre><code>386          let denominator = product.customers.len();
+387          let needs_identity_review = product
+388              .needs
+389              .keys()
+390              .any(|key| matches!(key, GroupKey::Unresolved(_)));
+391          let needs = product
+392              .needs
+393              .into_iter()
+394              .map(|(key, demand)| {
+395                  let need_text = demand.need_texts.iter().next().cloned().unwrap_or_default();
+396                  let count = demand.customers.len();
+397                  NeedReport {
+398                      need: need_text,
+399                      identity: match key {
+400                          GroupKey::Mapped(identity) =&gt; Some(identity),
+401                          GroupKey::Unresolved(_) =&gt; None,
+402                      },
+403                      customer_count: count,
+404                      percentage: if denominator == 0 {
+405                          0.0
+406                      } else {
+407                          100.0 * count as f64 / denominator as f64
+408                      },
+409                      qualifies: denominator &gt; 0 &amp;&amp; count &gt; denominator / 4,
+410                      variants: demand.variants.into_iter().collect(),
+411                      message_indices: demand.messages.into_iter().collect(),
+412                  }
+413              })
+414              .collect();
+415          let products = vec![ProductReport {
+416              product_id: product_id.to_owned(),
+417              denominator,
+418              needs_identity_review,
+419              needs,
+420          }];</code></pre></figure>
 <p>With four feature-requesting customers, one requestor gives 25% and does not qualify; two give 50% and do. The nonzero denominator check prevents an empty population from qualifying. Unidentified feedback remains evidence, but does not enter customer counts; bug-only feedback does not enter the feature-request denominator.</p>
 <p>Grouping retains variants and supporting message indices. When several needs share one identity, customers are deduplicated across those needs and the lexicographically first need becomes the group’s displayed need text. Original needs remain in saved classifications.</p>
 <div class="note"><strong>Qualifying demand is not ticket readiness.</strong> If any group lacks an identity, <code>needs_identity_review</code> is true for that product and its grouping is provisional. Another need may describe the same need and change the counts after review. A stable need identity also does not establish implementation scope or cooldown similarity.</div>
@@ -450,49 +451,49 @@ cargo run -- report --product fitness-app --state /data/fitness/ship-signal.sqli
 <p>A report is a snapshot: interval, valid feedback, diagnostics, model classifications, and calculated product demand. Saving evidence lets you explain an old result after source messages or model output change.</p>
 <h3 id="report-storage">Where do the values live?</h3>
 <div class="table-wrap"><table><thead><tr><th>SQLite table</th><th>Purpose</th></tr></thead><tbody><tr><td><code>analysis_reports</code></td><td><code>id INTEGER PRIMARY KEY</code>, <code>product_id TEXT NOT NULL</code>, and <code>report TEXT NOT NULL</code>. The row owns one product even when there are no messages. Feedback, classifications, and demand results are embedded in that JSON, not separate SQL tables.</td></tr><tr><td><code>need_identity_aliases</code></td><td>Current product/need/identity mappings confirmed by people. Primary key: <code>(product_id, need)</code>.</td></tr><tr><td><code>need_review_deferrals</code></td><td>Needs deliberately left for later, scoped to one report. Primary key: <code>(report_id, product_id, need)</code>.</td></tr></tbody></table></div>
-<p>The DDL is shown in <a href="#state-file">the database-opening code</a>. It declares no foreign keys; links such as <code>reviewed_from</code> are maintained by the application. A fuller database-design HTML guide has been prepared separately under <code>docs/06-database-design/</code>; that local draft is not included in the analyzed source or required to read this walkthrough.</p>
+<p>The DDL is shown in <a href="#state-file">the database-opening code</a>. It declares no foreign keys; links such as <code>reviewed_from</code> are maintained by the application. The <a href="../06-database-design/database-design.html">database-design guide</a> explains the tables, embedded JSON, relationships, and analysis-to-review write flow with diagrams and examples.</p>
 <h3 id="single-insert">Why is the report ID outside the stored JSON?</h3>
 <p><code>StoredReport</code> contains snapshot data. The report ID and authoritative product ownership come from the SQLite row. SQLite assigns its row ID and returns it from one complete insert that also saves <code>product_id</code>. Rust combines those values with the snapshot to return a public <code>Report</code> containing <code>id</code> and top-level <code>product_id</code> to the CLI. There is no empty placeholder row or second update to inject an ID.</p>
-<figure data-source="src/lib.rs" data-start="420" data-end="434"><figcaption>src/lib.rs · lines 420–434 <span>exact source excerpt</span></figcaption><pre><code>420          let report = StoredReport {
-421              reviewed_from,
-422              start,
-423              end,
-424              input,
-425              classifications,
-426              products,
-427          };
-428          let json = serde_json::to_string(&amp;report)?;
-429          let id: i64 = self.connection.query_row(
-430              &quot;INSERT INTO analysis_reports(product_id, report) VALUES (?1, ?2) RETURNING id&quot;,
-431              params![product_id, json],
-432              |row| row.get(0),
-433          )?;
-434          Ok(report.into_report(id, product_id.to_owned()))</code></pre></figure>
+<figure data-source="src/lib.rs" data-start="421" data-end="435"><figcaption>src/lib.rs · lines 421–435 <span>exact source excerpt</span></figcaption><pre><code>421          let report = StoredReport {
+422              reviewed_from,
+423              start,
+424              end,
+425              input,
+426              classifications,
+427              products,
+428          };
+429          let json = serde_json::to_string(&amp;report)?;
+430          let id: i64 = self.connection.query_row(
+431              &quot;INSERT INTO analysis_reports(product_id, report) VALUES (?1, ?2) RETURNING id&quot;,
+432              params![product_id, json],
+433              |row| row.get(0),
+434          )?;
+435          Ok(report.into_report(id, product_id.to_owned()))</code></pre></figure>
 <p>A report ID such as <code>1</code> identifies a saved report. A need identity such as <code>export-orders</code> identifies a customer goal within a product. A customer ID such as <code>alice</code> identifies the feedback customer. These are different identifiers.</p>
 <h3 id="load-report">What does loading a report later mean?</h3>
-<figure class="example"><figcaption>Example command · display existing report 1 <span>illustrative</span></figcaption><pre><code>cargo run -- report --product demo-shop --state ./ship-signal.sqlite 1</code></pre></figure><figure data-source="src/lib.rs" data-start="436" data-end="458"><figcaption>src/lib.rs · lines 436–458 <span>exact source excerpt</span></figcaption><pre><code>436      pub fn report(&amp;self, product_id: &amp;str, id: i64) -&gt; Result&lt;Report&gt; {
-437          validate_product_id(product_id)?;
-438          let (stored_product, json): (String, String) = self
-439              .connection
-440              .query_row(
-441                  &quot;SELECT product_id, report FROM analysis_reports WHERE id = ?1 AND product_id = ?2&quot;,
-442                  params![id, product_id],
-443                  |row| Ok((row.get(0)?, row.get(1)?)),
-444              )
-445              .context(&quot;report not found for the requested product&quot;)?;
-446          let report: StoredReport = serde_json::from_str(&amp;json)?;
-447          ensure!(
-448              report
-449                  .input
-450                  .feedback
-451                  .iter()
-452                  .all(|row| row.product_id == product_id)
-453                  &amp;&amp; report.products.len() == 1
-454                  &amp;&amp; report.products[0].product_id == product_id,
-455              &quot;saved report data does not match its product scope&quot;
-456          );
-457          Ok(report.into_report(id, stored_product))
-458      }</code></pre></figure>
+<figure class="example"><figcaption>Example command · display existing report 1 <span>illustrative</span></figcaption><pre><code>cargo run -- report --product demo-shop --state ./ship-signal.sqlite 1</code></pre></figure><figure data-source="src/lib.rs" data-start="437" data-end="459"><figcaption>src/lib.rs · lines 437–459 <span>exact source excerpt</span></figcaption><pre><code>437      pub fn report(&amp;self, product_id: &amp;str, id: i64) -&gt; Result&lt;Report&gt; {
+438          validate_product_id(product_id)?;
+439          let (stored_product, json): (String, String) = self
+440              .connection
+441              .query_row(
+442                  &quot;SELECT product_id, report FROM analysis_reports WHERE id = ?1 AND product_id = ?2&quot;,
+443                  params![id, product_id],
+444                  |row| Ok((row.get(0)?, row.get(1)?)),
+445              )
+446              .context(&quot;report not found for the requested product&quot;)?;
+447          let report: StoredReport = serde_json::from_str(&amp;json)?;
+448          ensure!(
+449              report
+450                  .input
+451                  .feedback
+452                  .iter()
+453                  .all(|row| row.product_id == product_id)
+454                  &amp;&amp; report.products.len() == 1
+455                  &amp;&amp; report.products[0].product_id == product_id,
+456              &quot;saved report data does not match its product scope&quot;
+457          );
+458          Ok(report.into_report(id, stored_product))
+459      }</code></pre></figure>
 <p>This command selects row 1 only when its SQL <code>product_id</code> matches <code>demo-shop</code>, then attaches the SQL row ID and product ownership to the JSON snapshot. It validates that embedded feedback and the single product result agree with that ownership. It does not reconnect to PostgreSQL, classify messages again, or regroup using current aliases. Later mappings do not change the old snapshot.</p>
 <p>The current development format uses <code>need</code> consistently and requires <code>analysis_reports.product_id</code>. It expects a fresh SQLite state file; there is no migration for earlier schemas.</p>
 </section><section id="review"><div class="section-head"><span class="step">07</span><h2>Review unresolved needs</h2></div>
@@ -505,34 +506,34 @@ cargo run -- report --product fitness-app --state /data/fitness/ship-signal.sqli
 <div class="note"><strong>The current model does not suggest new ID text.</strong> For a <code>new</code> or <code>uncertain</code> suggestion, its <code>identity</code> must be NULL. You type the new ID yourself. Model-suggested new ID text is an optional future idea, not current behavior.</div>
 <h3 id="review-candidates">7.2 · Where do review candidates come from?</h3>
 <p><strong>A review candidate is an existing confirmed need identity that might match the unresolved need.</strong> It is not a feedback message awaiting validation. The queue reads unresolved needs from the saved report and current confirmed mappings from <code>need_identity_aliases</code>, then groups same-product mappings by identity. Each resulting <code>NeedCandidate</code> has an <code>identity</code> and its mapped <code>needs</code>. The report being reviewed does not need to contain those identities already.</p>
-<figure data-source="src/lib.rs" data-start="258" data-end="285"><figcaption>src/lib.rs · lines 258–285 <span>exact source excerpt</span></figcaption><pre><code>258      pub fn need_review_queue(&amp;self, product_id: &amp;str, id: i64) -&gt; Result&lt;Vec&lt;NeedReviewItem&gt;&gt; {
-259          let report = self.report(product_id, id)?;
-260          let aliases: Vec&lt;_&gt; = self
-261              .need_identity_index(product_id)?
-262              .into_values()
-263              .collect();
-264          let mut result = Vec::new();
-265          for product in &amp;report.products {
-266              let mut candidates: BTreeMap&lt;String, Vec&lt;String&gt;&gt; = BTreeMap::new();
-267              for alias in aliases
-268                  .iter()
-269                  .filter(|a| a.product_id == product.product_id)
-270              {
-271                  candidates
-272                      .entry(alias.identity.clone())
-273                      .or_default()
-274                      .push(alias.need.clone());
-275              }
-276              let candidates: Vec&lt;NeedCandidate&gt; = candidates
-277                  .into_iter()
-278                  .map(|(identity, needs)| NeedCandidate { identity, needs })
-279                  .collect();
-280              for report_need in product.needs.iter().filter(|n| n.identity.is_none()) {
-281                  if aliases.iter().any(|a| {
-282                      a.product_id == product.product_id
-283                          &amp;&amp; a.need.to_lowercase() == report_need.need.to_lowercase()
-284                  }) {
-285                      continue;</code></pre></figure>
+<figure data-source="src/lib.rs" data-start="259" data-end="286"><figcaption>src/lib.rs · lines 259–286 <span>exact source excerpt</span></figcaption><pre><code>259      pub fn need_review_queue(&amp;self, product_id: &amp;str, id: i64) -&gt; Result&lt;Vec&lt;NeedReviewItem&gt;&gt; {
+260          let report = self.report(product_id, id)?;
+261          let aliases: Vec&lt;_&gt; = self
+262              .need_identity_index(product_id)?
+263              .into_values()
+264              .collect();
+265          let mut result = Vec::new();
+266          for product in &amp;report.products {
+267              let mut candidates: BTreeMap&lt;String, Vec&lt;String&gt;&gt; = BTreeMap::new();
+268              for alias in aliases
+269                  .iter()
+270                  .filter(|a| a.product_id == product.product_id)
+271              {
+272                  candidates
+273                      .entry(alias.identity.clone())
+274                      .or_default()
+275                      .push(alias.need.clone());
+276              }
+277              let candidates: Vec&lt;NeedCandidate&gt; = candidates
+278                  .into_iter()
+279                  .map(|(identity, needs)| NeedCandidate { identity, needs })
+280                  .collect();
+281              for report_need in product.needs.iter().filter(|n| n.identity.is_none()) {
+282                  if aliases.iter().any(|a| {
+283                      a.product_id == product.product_id
+284                          &amp;&amp; a.need.to_lowercase() == report_need.need.to_lowercase()
+285                  }) {
+286                      continue;</code></pre></figure>
 <p>The review item contains the current unresolved need and its supporting messages separately from the candidate identities. It does not retrieve historical feedback messages for every existing candidate. A fresh database has no review candidates until a person creates an identity mapping.</p>
 <div class="note"><strong>Illustrative example.</strong> The source message “Please download orders as CSV” passes validation and is classified as <code>need: "Download orders"</code>. During review, <code>export-orders</code> might be offered as a candidate because a person previously mapped <code>Export orders</code> to it. The message is evidence; <code>export-orders</code> is the possible identity match.</div>
 <p><strong>Review candidates refresh before each item.</strong> If you confirm <code>Download orders → export-orders</code>, the next item for that product sees <code>export-orders</code> with both <code>Download orders</code> and <code>Export orders</code> in its mapped <code>needs</code>. This works within the same command run; it does not require restarting review or rewriting the original report.</p>
@@ -713,17 +714,17 @@ cargo run -- review-needs --product demo-shop --state ./ship-signal.sqlite --rep
 cargo run -- review-needs --product demo-shop --state ./ship-signal.sqlite --report 1 --include-deferred</code></pre></figure>
 <p>Deferring does not reject the request or assign an identity. Its row is scoped to report 1; a different report does not inherit that deferral. Without this table, “leave unresolved” would skip an item only until the next session. Deferral rows are not currently deleted on mapping; the queue excludes mapped needs independently.</p>
 <h3 id="review-result">7.6 · Save a separate reviewed report</h3>
-<figure data-source="src/lib.rs" data-start="312" data-end="322"><figcaption>src/lib.rs · lines 312–322 <span>exact source excerpt</span></figcaption><pre><code>312      pub fn review_report(&amp;mut self, product_id: &amp;str, id: i64) -&gt; Result&lt;Report&gt; {
-313          let previous = self.report(product_id, id)?;
-314          self.complete_analysis(
-315              product_id,
-316              previous.start,
-317              previous.end,
-318              previous.input,
-319              previous.classifications,
-320              Some(id),
-321          )
-322      }</code></pre></figure>
+<figure data-source="src/lib.rs" data-start="313" data-end="323"><figcaption>src/lib.rs · lines 313–323 <span>exact source excerpt</span></figcaption><pre><code>313      pub fn review_report(&amp;mut self, product_id: &amp;str, id: i64) -&gt; Result&lt;Report&gt; {
+314          let previous = self.report(product_id, id)?;
+315          self.complete_analysis(
+316              product_id,
+317              previous.start,
+318              previous.end,
+319              previous.input,
+320              previous.classifications,
+321              Some(id),
+322          )
+323      }</code></pre></figure>
 <p>On review completion, <code>review_report</code> passes the original report’s saved input and classifications to the shared calculation with <code>reviewed_from: Some(id)</code>. For example, a fresh run might create report 2 with <code>reviewed_from: 1</code>. It uses current mappings to regroup and recalculate demand, without rereading PostgreSQL or invoking the classifier. The review suggestion calls are a separate model task.</p>
 <p>Report 1 stays unchanged, including its earlier NULL identities and counts. Deferred needs remain unresolved in report 2, so that product remains provisional. Quitting or reaching end of input before completion creates no reviewed report; mappings and deferrals already saved survive. Even completing an empty queue can create another snapshot. The entire interactive session is not one database transaction.</p>
 <p>You can also run <code>review-report</code> explicitly after direct mappings. Recalculating saved classifications is distinct from a historical source rerun under ADR-0005, which rereads current source feedback for the original interval.</p>
