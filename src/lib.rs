@@ -354,12 +354,10 @@ impl Workflow {
             }
         }
         let aliases = self.need_identity_index(product_id)?;
-        let mut products: BTreeMap<String, ProductDemand> = BTreeMap::new();
-        products.entry(product_id.to_owned()).or_default();
+        let mut product = ProductDemand::default();
         // zip doesn't match using message_index. That is why the earlier code first sorts
         // classifications by index and validates their count and indices.
         for (row, classification) in input.feedback.iter().zip(&classifications) {
-            let product = products.entry(row.product_id.clone()).or_default();
             if !classification.needs.is_empty() {
                 if let Some(customer) = &row.customer_id {
                     product.customers.insert(customer.clone());
@@ -384,47 +382,41 @@ impl Workflow {
                 group.messages.insert(classification.message_index);
             }
         }
-        let products = products
+        let denominator = product.customers.len();
+        let needs_identity_review = product
+            .needs
+            .keys()
+            .any(|key| matches!(key, GroupKey::Unresolved(_)));
+        let needs = product
+            .needs
             .into_iter()
-            .map(|(product_id, product)| {
-                let denominator = product.customers.len();
-                let needs_identity_review = product
-                    .needs
-                    .keys()
-                    .any(|key| matches!(key, GroupKey::Unresolved(_)));
-                let needs = product
-                    .needs
-                    .into_iter()
-                    .map(|(key, demand)| {
-                        let need_text =
-                            demand.need_texts.iter().next().cloned().unwrap_or_default();
-                        let count = demand.customers.len();
-                        NeedReport {
-                            need: need_text,
-                            identity: match key {
-                                GroupKey::Mapped(identity) => Some(identity),
-                                GroupKey::Unresolved(_) => None,
-                            },
-                            customer_count: count,
-                            percentage: if denominator == 0 {
-                                0.0
-                            } else {
-                                100.0 * count as f64 / denominator as f64
-                            },
-                            qualifies: denominator > 0 && count > denominator / 4,
-                            variants: demand.variants.into_iter().collect(),
-                            message_indices: demand.messages.into_iter().collect(),
-                        }
-                    })
-                    .collect();
-                ProductReport {
-                    product_id,
-                    denominator,
-                    needs_identity_review,
-                    needs,
+            .map(|(key, demand)| {
+                let need_text = demand.need_texts.iter().next().cloned().unwrap_or_default();
+                let count = demand.customers.len();
+                NeedReport {
+                    need: need_text,
+                    identity: match key {
+                        GroupKey::Mapped(identity) => Some(identity),
+                        GroupKey::Unresolved(_) => None,
+                    },
+                    customer_count: count,
+                    percentage: if denominator == 0 {
+                        0.0
+                    } else {
+                        100.0 * count as f64 / denominator as f64
+                    },
+                    qualifies: denominator > 0 && count > denominator / 4,
+                    variants: demand.variants.into_iter().collect(),
+                    message_indices: demand.messages.into_iter().collect(),
                 }
             })
             .collect();
+        let products = vec![ProductReport {
+            product_id: product_id.to_owned(),
+            denominator,
+            needs_identity_review,
+            needs,
+        }];
         let report = StoredReport {
             reviewed_from,
             start,
