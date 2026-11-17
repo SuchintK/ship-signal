@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Ship Signal · Database design</title>
+<style>
+:root{--bg:#101820;--panel:#192630;--ink:#eef5f6;--muted:#b3c6cf;--line:#36505e;--accent:#8ce0c2;--blue:#9ecfff;--warm:#f8d38e}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--accent);text-underline-offset:4px}a:focus-visible{outline:3px solid var(--warm);outline-offset:5px}header,main,footer{max-width:1120px;margin:auto;padding:40px 32px}header{padding-top:70px;padding-bottom:20px}.eyebrow{color:var(--accent);font-size:13px;font-weight:750;letter-spacing:.14em;text-transform:uppercase}h1{font-size:clamp(38px,6vw,66px);line-height:1.08;letter-spacing:-.04em;margin:16px 0 24px}h2{font-size:30px;line-height:1.2;margin:0 0 20px;letter-spacing:-.02em}h3{font-size:21px;line-height:1.3;margin:26px 0 12px}p{margin:12px 0 18px}.lede{font-size:22px;max-width:800px;color:var(--muted)}.meta{color:var(--muted);font-size:13px;overflow-wrap:anywhere}nav{display:flex;flex-wrap:wrap;gap:8px 20px;padding:23px 0;border-block:1px solid var(--line);margin-top:30px}nav a{font-size:14px}section{margin:0 0 65px}.number{color:var(--accent);font-size:13px;font-weight:700;display:block;letter-spacing:.1em;margin-bottom:8px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.card,.callout{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}.card h3{margin-top:0}.card p:last-child,.callout p:last-child{margin-bottom:0}.callout{border-left:4px solid var(--accent);margin:22px 0}.warm{border-left-color:var(--warm)}.muted{color:var(--muted)}.tag{font-size:12px;display:inline-block;color:var(--accent);border:1px solid var(--line);padding:2px 9px;border-radius:20px;margin-bottom:10px}.tag.blue{color:var(--blue)}code{font: .88em/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}p code,li code,td code{color:var(--blue)}pre{margin:16px 0 24px;background:#0a1219;border:1px solid var(--line);border-radius:10px;padding:20px;overflow-x:auto;line-height:1.55}pre code{overflow-wrap:normal;color:#d5e9f0}table{border-collapse:collapse;width:100%;font-size:15px;margin:16px 0 24px}th,td{text-align:left;vertical-align:top;padding:12px 14px;border-bottom:1px solid var(--line)}th{color:var(--accent);font-size:13px;font-weight:700;background:var(--panel)}.table-wrap{overflow-x:auto}table code{white-space:normal}.flow{display:flex;align-items:stretch;gap:12px;margin:24px 0}.flow .card{flex:1;min-width:0;padding:18px}.arrow{align-self:center;color:var(--accent);font-size:26px}.flow h3{font-size:18px}.flow p{font-size:14px}.diagram{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:24px;margin:22px 0}.diagram svg{display:block;width:100%;height:auto}.caption{font-size:14px;color:var(--muted);margin:14px 0 0}ol,ul{padding-left:25px}li{margin:9px 0}.steps{counter-reset:step;list-style:none;padding:0}.steps li{padding:4px 0 14px 46px;position:relative}.steps li:before{counter-increment:step;content:counter(step);position:absolute;left:0;top:5px;background:var(--panel);border:1px solid var(--line);border-radius:50%;width:30px;height:30px;text-align:center;color:var(--accent);font-size:15px}.key{font-weight:700;color:var(--warm)}footer{border-top:1px solid var(--line);font-size:14px;color:var(--muted);padding-top:25px;padding-bottom:45px}
+@media(max-width:740px){header,main,footer{padding-inline:20px}header{padding-top:36px}.grid{grid-template-columns:1fr}.flow{flex-direction:column}.arrow{transform:rotate(90deg)}h2{font-size:26px}th,td{padding:10px}body{font-size:16px}.diagram{padding:10px}}
+@media print{body{background:white;color:#15232c;font-size:11pt}header,main,footer{max-width:none;padding:16px}.lede,.muted,.caption,.meta{color:#425761}a,p code,li code,td code,.number,.eyebrow{color:#16644f}.card,.callout,.diagram,th{background:#f3f6f7;border-color:#bbc9ce}pre{background:#f3f6f7;white-space:pre-wrap}pre code{color:#15232c}nav{display:none}section{margin-bottom:30px}h2,h3{break-after:avoid}tr,.card{break-inside:avoid}.diagram{print-color-adjust:exact;background:#192630}svg text{fill:#eef5f6}}
+</style>
+</head>
+<body>
+<header>
+<div class="eyebrow">Ship Signal / Engineering guide / 06</div>
+<h1>Database design</h1>
+<p class="lede">Where feedback comes from, how reports are saved, and how a model’s need text becomes a human-confirmed identity.</p>
+<p class="meta">Implemented design · Source commit <code>2a572367f3f9a9e5f1dd1e69b929911fb4ecd0e3</code><br>This guide describes the analysis and need review code at that commit. Wider workflow storage remains to be implemented.</p>
+<nav aria-label="Contents">
+<a href="#overview">01 · Two stores</a><a href="#relationships">02 · Relationships</a><a href="#source">03 · Feedback source</a><a href="#tables">04 · SQLite tables</a><a href="#json">05 · Report JSON</a><a href="#identity">06 · Needs &amp; IDs</a><a href="#flow">07 · Write flow</a><a href="#boundaries">08 · Boundaries</a>
+</nav>
+</header>
+<main>
+<section id="overview">
+<span class="number">01 / STORAGE BOUNDARIES</span><h2>Two databases, two responsibilities</h2>
+<div class="grid">
+<article class="card"><span class="tag blue">Customer-owned PostgreSQL</span><h3>The feedback source</h3><p>The customer application owns the original messages. A PostgreSQL view exposes the seven columns Ship Signal understands.</p><p>Ship Signal reads this view in a read-only transaction. It does not save review decisions into the customer’s database.</p></article>
+<article class="card"><span class="tag">Ship Signal SQLite file</span><h3>The application state</h3><p>A local file selected with <code>--state</code> contains saved reports, confirmed need-to-identity mappings, and deferred review items.</p><p>Accepted deployment: persistent local storage on one host. The SQLite file is separate from the feedback database.</p></article>
+</div>
+<div class="flow" aria-label="Feedback storage flow">
+<div class="card"><h3>PostgreSQL view</h3><p>Read one selected product for <code>[start, end)</code>.</p></div><span class="arrow" aria-hidden="true">→</span>
+<div class="card"><h3>Rust workflow</h3><p>Validate, classify, group, and count customers.</p></div><span class="arrow" aria-hidden="true">→</span>
+<div class="card"><h3>SQLite report</h3><p>Save the inputs, classifications, diagnostics, and demand result.</p></div>
+</div>
+<p class="muted">Why copy the feedback? A saved report must still explain its result after the source message changes or a new model run produces different needs. See <a href="../03-adr/0005-preserve-weekly-feedback-evidence-and-require-explicit-historical-corrections.md">ADR-0005</a>.</p>
+</section>
+
+<section id="relationships">
+<span class="number">02 / RELATIONSHIP MAP</span><h2>Three physical SQLite tables</h2>
+<div class="diagram">
+<svg viewBox="0 0 960 470" role="img" aria-labelledby="er-title er-description">
+<title id="er-title">SQLite tables and application-level relationships</title>
+<desc id="er-description">Analysis reports has id, product id, and report JSON. Deferrals refers to report id. Report JSON reviewed_from can refer to another report. Alias mappings are looked up by product id and need text in classifications. Dashed lines are application relationships, not database foreign keys.</desc>
+<defs><marker id="arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="#8ce0c2"/></marker></defs>
+<g fill="#101820" stroke="#557383" stroke-width="1.5"><rect x="25" y="40" width="410" height="220" rx="12"/><rect x="525" y="40" width="410" height="180" rx="12"/><rect x="525" y="300" width="410" height="150" rx="12"/></g>
+<g fill="#eef5f6" font-family="ui-monospace,monospace" font-size="17">
+<text x="45" y="73" fill="#8ce0c2" font-weight="700">analysis_reports</text>
+<text x="45" y="108">PK  id INTEGER</text><text x="45" y="138">    product_id TEXT</text><text x="45" y="168">    report TEXT (JSON)</text>
+<text x="45" y="200" font-size="14">JSON: reviewed_from → report ID</text><text x="45" y="229" font-size="14">classifications → request.need</text>
+<text x="545" y="73" fill="#8ce0c2" font-weight="700">need_review_deferrals</text>
+<text x="545" y="108">PK  report_id INTEGER</text><text x="545" y="138">PK  product_id TEXT</text><text x="545" y="168">PK  need TEXT</text><text x="545" y="199" font-size="13">All three columns form one key.</text>
+<text x="545" y="334" fill="#8ce0c2" font-weight="700">need_identity_aliases</text>
+<text x="545" y="368">PK  product_id TEXT</text><text x="545" y="398">PK  need TEXT</text><text x="545" y="428">    identity TEXT</text>
+</g>
+<g fill="none" stroke="#8ce0c2" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrowhead)">
+<path d="M525 108 H435"/><path d="M180 260 V375 H525"/>
+</g>
+<g fill="#b3c6cf" font-family="system-ui,sans-serif" font-size="13"><text x="444" y="93">report ID</text><text x="45" y="302">Lookup using product_id + request.need</text><text x="45" y="329">need is the same field in JSON and mappings</text></g>
+</svg>
+<p class="caption">PK = primary key, the column or combination of columns that uniquely identifies a row. Dashed lines show relationships used by Rust code. The current DDL declares no foreign keys.</p>
+</div>
+<div class="callout"><p><strong>There is no separate <code>needs</code>, <code>customers</code>, or <code>classifications</code> table.</strong> Reports embed these values in JSON. There is also no separate identity table: a need identity exists as a text value in one or more alias rows for a product.</p></div>
+</section>
+
+<section id="source">
+<span class="number">03 / POSTGRESQL CONTRACT</span><h2>The customer-facing feedback view</h2>
+<p>The configured view can have any name. The synthetic fixture uses <code>public.ship_signal_feedback</code>. Its underlying application table, <code>customer_feedback</code>, is demo data; real customer tables may have a different shape.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>View column</th><th>PostgreSQL type</th><th>Validation / meaning</th></tr></thead>
+<tbody>
+<tr><td><code>product_id</code></td><td><code>text</code></td><td>Required, nonblank. Separates product demand and identity mappings.</td></tr>
+<tr><td><code>feedback_source_id</code></td><td><code>text</code></td><td>Required, nonblank. Source namespace, such as <code>email</code> or <code>chat</code>.</td></tr>
+<tr><td><code>source_message_id</code></td><td><code>text</code></td><td>Required, nonblank. Stable message ID within the product and source.</td></tr>
+<tr><td><code>customer_id</code></td><td><code>text</code></td><td>May be NULL for unidentified feedback. A non-NULL blank value is invalid. Identifies a feedback customer within a product.</td></tr>
+<tr><td><code>submitted_at</code></td><td><code>timestamp with time zone</code></td><td>Required. Source timezone mapping must be explicitly confirmed.</td></tr>
+<tr><td><code>feedback_text</code></td><td><code>text</code></td><td>Required, nonblank. The message sent for classification.</td></tr>
+<tr><td><code>source_reference</code></td><td><code>text</code></td><td>Optional pointer to the original message. NULL is allowed.</td></tr>
+</tbody></table></div>
+<p><strong>Logical message key:</strong> <code>(product_id, feedback_source_id, source_message_id)</code>. Among rows that pass field validation in a read, every occurrence of a duplicated key is excluded. This is application validation; Ship Signal does not add a unique constraint to the customer’s view.</p>
+<pre><code>-- From fixtures/feedback.sql; synthetic source times are known to be UTC.
+CREATE VIEW ship_signal_feedback AS
+SELECT 'demo-shop'::text AS product_id,
+       channel::text AS feedback_source_id,
+       id::text AS source_message_id,
+       customer_id::text AS customer_id,
+       submitted_local AT TIME ZONE 'UTC' AS submitted_at,
+       message::text AS feedback_text,
+       NULL::text AS source_reference
+FROM customer_feedback;</code></pre>
+<p>Every command requires <code>--product</code>. The reader first filters <code>product_id = supplied_product</code>, then selects <code>submitted_at &gt;= start AND submitted_at &lt; end</code> plus NULL timestamps for that product. Matching NULL timestamps are counted as invalid; other products and rows without a product ID are outside this read and its diagnostics. The report saves valid rows and exclusion counts/reasons; excluded raw messages are not copied into the report.</p>
+<div class="callout warm"><p><strong>A timestamp type cannot verify the original timezone.</strong> <code>--timestamps-mapped-to-utc</code> confirms for this invocation that the customer team has mapped source times correctly in the view. This confirmation is checked, not saved in application state. For a local source time in another timezone, the view must use that actual timezone. The flag does not repair an incorrect conversion.</p></div>
+<p class="muted">Implementation: <a href="../../src/postgres_source.rs">src/postgres_source.rs</a> · Fixture: <a href="../../fixtures/feedback.sql">fixtures/feedback.sql</a></p>
+</section>
+
+<section id="tables">
+<span class="number">04 / PHYSICAL SCHEMA</span><h2>What SQLite actually stores</h2>
+<p><code>Workflow::open</code> creates these tables if they do not exist. The definitions below match the current code, formatted for readability.</p>
+<pre><code>CREATE TABLE IF NOT EXISTS analysis_reports (
+    id INTEGER PRIMARY KEY,
+    product_id TEXT NOT NULL,
+    report TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS need_identity_aliases (
+    product_id TEXT NOT NULL,
+    need TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    PRIMARY KEY (product_id, need)
+);
+
+CREATE TABLE IF NOT EXISTS need_review_deferrals (
+    report_id INTEGER NOT NULL,
+    product_id TEXT NOT NULL,
+    need TEXT NOT NULL,
+    PRIMARY KEY (report_id, product_id, need)
+);</code></pre>
+<h3>A. <code>analysis_reports</code> — one saved result per row</h3>
+<div class="table-wrap"><table><thead><tr><th>Column</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>id</code></td><td>SQLite-generated integer primary key. Returned by <code>INSERT … RETURNING id</code>. It identifies a report, not a need.</td></tr>
+<tr><td><code>product_id</code></td><td>Authoritative owner of this report, including empty analyses. Loading and reviewing require both the row ID and this product ID.</td></tr>
+<tr><td><code>report</code></td><td>Serialized <code>StoredReport</code> JSON: interval, evidence, diagnostics, classifications, product demand, and optional parent report ID.</td></tr>
+</tbody></table></div>
+<p>The application inserts a complete report once. Reviewing a report inserts a new row rather than updating the original. Immutability is application behavior: the production schema does not contain a trigger preventing manual updates.</p>
+<h3>B. <code>need_identity_aliases</code> — confirmed meaning of a need</h3>
+<div class="table-wrap"><table><thead><tr><th>product_id</th><th>need</th><th>identity</th></tr></thead><tbody>
+<tr><td>demo-shop</td><td>Export orders</td><td>export-orders</td></tr>
+<tr><td>demo-shop</td><td>Download orders</td><td>export-orders</td></tr>
+<tr><td>another-product</td><td>Export orders</td><td>order-download</td></tr>
+</tbody></table></div>
+<p>Differently worded needs can share an identity within one product. The combined primary key ensures that one exact product/need pair has only one current identity. Rust additionally compares need text using Unicode lowercase keys and prevents case-equivalent duplicate mappings in a transaction. The SQLite primary key itself remains case-sensitive. The effective stable identity is <code>(product_id, identity)</code>; the same identity text in another product is independent.</p>
+<p>A person chooses the identity text. For the same product, mapping <code>EXPORT ORDERS</code> to an existing <code>Export orders</code> mapping reuses its row when the identity agrees. Assigning a conflicting identity fails. An explicit correction updates the mapping only when the supplied previous identity still matches. The table keeps the current mapping; it has no mapping-history or review-actor columns.</p>
+<h3>C. <code>need_review_deferrals</code> — “review this later”</h3>
+<div class="table-wrap"><table><thead><tr><th>report_id</th><th>product_id</th><th>need</th></tr></thead><tbody><tr><td>1</td><td>demo-shop</td><td>Download orders</td></tr></tbody></table></div>
+<p>This row skips that unresolved need when normal interactive review resumes for report 1. <code>--include-deferred</code> includes it again. A deferral does not assign an identity, reject the request, or defer the need in every report.</p>
+<p>Deferrals are not currently deleted when a need is mapped. The queue first excludes needs that already have a current mapping, so an old deferral does not require another decision.</p>
+<div class="callout warm"><p><strong>Database rules versus Rust rules:</strong> primary keys and <code>NOT NULL</code> are enforced by SQLite. Nonblank mappings, case-insensitive matching and duplicate prevention, guarded corrections, valid report JSON, and relationships between rows are checked or maintained by application code. There are no declared foreign keys, JSON <code>CHECK</code> constraints, or explicit secondary indexes.</p></div>
+</section>
+
+<section id="json">
+<span class="number">05 / EMBEDDED DATA MODEL</span><h2>A report is a snapshot inside one cell</h2>
+<p>These are JSON fields inside <code>analysis_reports.report</code>, rather than additional SQL tables.</p>
+<div class="table-wrap"><table><thead><tr><th>JSON path</th><th>Contains</th><th>Relationship</th></tr></thead><tbody>
+<tr><td><code>reviewed_from</code></td><td>Parent report ID or NULL.</td><td>Application-level link to <code>analysis_reports.id</code>. Initial analysis uses NULL.</td></tr>
+<tr><td><code>start</code>, <code>end</code></td><td>UTC timestamps for the half-open interval.</td><td>The same interval is retained when reviewing saved evidence.</td></tr>
+<tr><td><code>input.feedback[]</code></td><td>Validated feedback rows, including customer IDs, message text, and source references.</td><td>Array positions identify messages within this report.</td></tr>
+<tr><td><code>input.diagnostics</code></td><td>Invalid-row totals and counts by reason.</td><td>Reason counts may overlap when one row has several problems.</td></tr>
+<tr><td><code>classifications[]</code></td><td>One <code>message_index</code> and zero or more <code>needs</code> per feedback message.</td><td><code>message_index</code> points to <code>input.feedback[index]</code>. Indices start at 0.</td></tr>
+<tr><td><code>classifications[].needs[]</code></td><td>Nonblank <code>need</code> customer goal and explicit nonblank <code>variant</code> option, or JSON <code>null</code> when none is stated. The prompt asks for consistent sentence case and conventional acronym casing.</td><td>The <code>need</code> text is looked up in the alias table for the same product.</td></tr>
+<tr><td><code>products[]</code></td><td>Product ID, denominator, review flag, and grouped need results.</td><td>Exactly one entry for the selected product, including when it has no valid feedback.</td></tr>
+<tr><td><code>products[].needs[]</code></td><td>Displayed need text, optional identity, count, percentage, threshold result, variants, and message indices.</td><td>Message indices preserve the supporting evidence; identity is copied from confirmed mappings when calculated.</td></tr>
+</tbody></table></div>
+<p>The public <code>Report</code> returned to the CLI adds <code>id</code> and top-level <code>product_id</code> from the SQLite row. The stored JSON keeps its feedback and one product result as evidence. Rust checks that those embedded product IDs agree with the row owner when loading. Even an empty result has one product entry, a zero denominator, and no needs. Wrong-product report commands fail before model calls or review writes.</p>
+<h3>Example: report row 1 before identity review</h3>
+<p>One identified customer explicitly asks for CSV order exports. Assume no matching alias exists yet. The row’s SQL <code>id</code> is <code>1</code> and SQL <code>product_id</code> is <code>demo-shop</code>; its <code>report</code> cell contains:</p>
+<pre><code>{
+  "reviewed_from": null,
+  "start": "2026-11-06T00:00:00Z",
+  "end": "2026-11-13T00:00:00Z",
+  "input": {
+    "feedback": [{
+      "product_id": "demo-shop",
+      "feedback_source_id": "email",
+      "source_message_id": "101",
+      "customer_id": "alice",
+      "submitted_at": "2026-11-08T10:00:00Z",
+      "text": "Please let me export orders as CSV.",
+      "source_reference": null
+    }],
+    "diagnostics": {}
+  },
+  "classifications": [{
+    "message_index": 0,
+    "needs": [{ "need": "Export orders", "variant": "CSV" }]
+  }],
+  "products": [{
+    "product_id": "demo-shop",
+    "denominator": 1,
+    "needs_identity_review": true,
+    "needs": [{
+      "need": "Export orders",
+      "identity": null,
+      "customer_count": 1,
+      "percentage": 100.0,
+      "qualifies": true,
+      "variants": ["CSV"],
+      "message_indices": [0]
+    }]
+  }]
+}</code></pre>
+<p><code>qualifies: true</code> means demand is strictly greater than 25%. It does not mean the result is ready to become a ticket: <code>needs_identity_review: true</code> marks the product’s demand as provisional.</p>
+<div class="callout"><p><strong>The report ID belongs to the SQL row.</strong> <code>StoredReport</code> contains snapshot fields and has no <code>id</code> field. When Rust loads a row, it combines that row ID with the JSON to return a public <code>Report</code> containing <code>id</code>. The current need-based development format expects a fresh SQLite state file.</p></div>
+</section>
+
+<section id="identity">
+<span class="number">06 / IDENTITY</span><h2>Need text and a stable identity are different values</h2>
+<div class="table-wrap"><table><thead><tr><th>Value</th><th>Example</th><th>Who sets it?</th></tr></thead><tbody>
+<tr><td>Need</td><td><code>Export orders</code></td><td>The classifier, reports, and alias table all use the <code>need</code> field for this text.</td></tr>
+<tr><td>Requested variant</td><td><code>CSV</code></td><td>The classifier returns it in <code>Need.variant</code>. NULL means no variant was specified.</td></tr>
+<tr><td>Need identity</td><td><code>export-orders</code></td><td>A person creates or confirms it through review or <code>map-need</code>.</td></tr>
+<tr><td>Report ID</td><td><code>1</code></td><td>SQLite assigns it when a report row is inserted.</td></tr>
+<tr><td>Feedback customer ID</td><td><code>alice</code></td><td>The customer application supplies it. Used for distinct-customer counting.</td></tr>
+</tbody></table></div>
+<p><strong>During Analyze:</strong> Rust selects aliases for the exact product ID, then looks up <code>request.need.to_lowercase()</code> in an index whose keys are also lowercased. For example, <code>EXPORT ORDERS</code> matches a confirmed <code>Export orders</code> alias. Original alias and classification text remains intact. Product and identity IDs remain case-sensitive. Spaces, punctuation, and synonyms are not normalized; this uses Unicode lowercasing, not full Unicode case folding. If it finds a row, it reuses that identity. Otherwise the result keeps <code>identity: null</code> and groups by the unresolved need. Analyze does not create a new stable identity.</p>
+<pre><code>// Model output:
+Need { need: "Export orders", variant: Some("CSV") }
+
+// Human-confirmed mapping stored later:
+(product_id: "demo-shop", need: "Export orders", identity: "export-orders")
+
+// Future Analyze runs for this product can reuse it despite case differences.
+// A new need such as "Download orders" still needs review.</code></pre>
+<p><strong>During review:</strong> the model can suggest an existing identity, a new need, or uncertainty. The person confirms an existing match, chooses another existing ID, types a new ID, or defers. Model suggestions alone never write an alias mapping. The queue and suggestions are constructed at runtime; there is no saved review-queue table or model-suggestion table.</p>
+<p>Conflicting case-equivalent alias rows written outside Ship Signal cause an error when the index is built, rather than an arbitrary winner. Assignment and correction keep their lookup and write in one SQLite transaction. No extra normalization column or schema migration is needed. Unmapped differently cased needs remain unresolved until a confirmed mapping exists.</p>
+<p>When several mapped needs share one identity, their customers are deduplicated together. The report uses the lexicographically first need as the grouped displayed need text. Original needs remain in the saved classifications.</p>
+</section>
+
+<section id="flow">
+<span class="number">07 / READS &amp; WRITES</span><h2>Follow one analysis through review</h2>
+<ol class="steps">
+<li><strong>Read the customer view for the supplied product.</strong> Filter in PostgreSQL before capture. Validate matching rows, exclude invalid messages, and collect diagnostics. This step makes no source-database writes.</li>
+<li><strong>Classify the valid messages.</strong> The model returns need texts and optional variants. Rust validates the classification shape and message indices.</li>
+<li><strong>Read current aliases and calculate demand.</strong> Reuse confirmed mappings without regard to need-text case. Count each identified customer once per need and once in the product denominator when they made any explicit feature request. Preserve unidentified feedback as evidence while excluding it from counts.</li>
+<li><strong>Insert report 1.</strong> Serialize the complete snapshot, then execute one <code>INSERT INTO analysis_reports(product_id, report) VALUES (?1, ?2) RETURNING id</code>. There is no placeholder insert followed by a JSON update.</li>
+<li><strong>Review unresolved needs.</strong> Read report 1 and same-product aliases to build the queue. A confirmed decision inserts a mapping immediately; a deferral inserts a report-scoped deferral row. These decisions survive quitting or interruption.</li>
+<li><strong>Insert reviewed report 2.</strong> On review completion, recalculate from report 1’s saved inputs and classifications using current mappings. Save a new row with <code>reviewed_from: 1</code>. This step does not reread PostgreSQL or rerun classification. Deferred needs can leave the new report provisional.</li>
+</ol>
+<div class="grid">
+<article class="card"><h3>What changes?</h3><p>The alias table gains the confirmed mapping. In report 2, the example need has <code>identity: "export-orders"</code> and the product’s review flag becomes false if no unresolved needs remain.</p></article>
+<article class="card"><h3>What stays explainable?</h3><p>Report 1 keeps its original <code>identity: null</code>. Loading it does not recompute the result using today’s aliases. A review operation explicitly creates another snapshot.</p></article>
+</div>
+<p class="muted">Quitting with <code>q</code> or reaching end of input before review completion creates no new reviewed report. Mappings and deferrals already saved remain in SQLite. The whole review session is not one transaction.</p>
+</section>
+
+<section id="boundaries">
+<span class="number">08 / IMPLEMENTATION BOUNDARIES</span><h2>What this design does and what remains open</h2>
+<div class="table-wrap"><table><thead><tr><th>Area</th><th>Current implementation</th></tr></thead><tbody>
+<tr><td>Schema setup</td><td><code>CREATE TABLE IF NOT EXISTS</code> at open time. No versioned migration framework or schema-version table is configured.</td></tr>
+<tr><td>Development format</td><td>The report row requires <code>product_id</code>. Classification and report JSON use <code>need</code>; mapping and deferral columns also use <code>need</code>. This format assumes a fresh state file, with no migration or old-field aliases.</td></tr>
+<tr><td>SQLite settings</td><td>The workflow does not explicitly configure WAL, a busy timeout, or foreign-key enforcement. These are not guarantees of this schema.</td></tr>
+<tr><td>Historical source corrections</td><td>Reviewing saved classifications is implemented. The wider historical rerun and comparison workflow described in ADR-0005 is separate; <code>reviewed_from</code> records identity-review derivation here.</td></tr>
+<tr><td>Retention and deletion</td><td>Saved reports contain copied customer messages and IDs. This code does not implement a retention/deletion policy or automatic cleanup of reports and deferrals.</td></tr>
+<tr><td>Later workflow state</td><td>Schedules, ticket links, approvals, repository ownership, implementation runs, and external-operation recovery have no tables in this implementation. The wider MVP specification covers work beyond this schema.</td></tr>
+<tr><td>Identity meaning</td><td>A confirmed identity groups customer needs. It does not prove that a proposed implementation has the same scope as an existing ticket or resolve the similar-feature cooldown policy.</td></tr>
+</tbody></table></div>
+<h3>Source and accepted decisions</h3>
+<ul>
+<li><a href="../../src/lib.rs">src/lib.rs</a> — table creation, report types, mappings, demand grouping, and report persistence.</li>
+<li><a href="../../src/need_review.rs">src/need_review.rs</a> — interactive queue, confirmed decisions, deferrals, and reviewed report creation.</li>
+<li><a href="../../src/postgres_source.rs">src/postgres_source.rs</a> — PostgreSQL view contract and row validation.</li>
+<li><a href="../03-adr/0003-use-sqlite-for-single-host-mvp-state.md">ADR-0003</a> — accepted SQLite and single-host boundary.</li>
+<li><a href="../03-adr/0005-preserve-weekly-feedback-evidence-and-require-explicit-historical-corrections.md">ADR-0005</a> — accepted saved-evidence and historical-correction policy.</li>
+<li><a href="../04-mvp-spec/README.md">MVP specification</a> and <a href="../05-pr-walkthroughs/pr-1.html">PR #1 walkthrough</a> — broader scope and code explanation.</li>
+</ul>
+</section>
+</main>
+<footer><a href="../README.md">Documentation index</a> · <a href="README.md">Database design entry point</a><p>This is documentation of the implemented schema, not a schema migration or a new architecture decision. Source links point to local repository files; the source commit above identifies the version described.</p></footer>
+</body>
+</html>

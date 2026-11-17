@@ -1,0 +1,11 @@
+#!/bin/sh
+# Use this command in place of gh pr create; all arguments go to gh.
+set -eu
+result=$(gh pr create "$@") || exit $?
+printf '%s\n' "$result"
+url=$(printf '%s\n' "$result" | sed -nE 's|^(https://[^ /]+/[^ /]+/[^ /]+/pull/[0-9]+)$|\1|p' | tail -n 1)
+if [ -n "$url" ]; then
+  printf 'CODEX_PR_WALKTHROUGH_CREATED=%s\n' "$url"
+else
+  printf '%s\n' 'PR created, but no PR URL was returned; invoke the walkthrough manually.' >&2
+fi

@@ -251,6 +251,7 @@ impl Workflow {
                 .all(|row| row.product_id == product_id),
             "feedback source returned rows outside the requested product"
         );
+        // Classify the feedback
         let classifications = classify(&input.feedback)?;
         self.complete_analysis(product_id, start, end, input, classifications, None)
     }
