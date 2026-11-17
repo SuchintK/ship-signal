@@ -125,7 +125,7 @@ aside nav{display:block}.toc,.toc-sub{list-style:none;padding:0;margin:0;display
 </ul>
 </nav></aside><main>
 <header class="hero"><div class="eyebrow">Code walkthrough · PR #1</div><h1>From feedback<br>to reviewed demand.</h1><p class="intro">Follow one selected product’s data from a PostgreSQL message to a saved report, a human-confirmed need identity, and a separately reviewed demand result.</p>
-<div class="meta"><span>Analyzed source SHA: 4a3147efe564e37fb8d047344f48b3a23b6902d6</span><span>Base SHA: 5322a1d76a53fd0b9142a14ebd350ffdabfacff8</span></div>
+<div class="meta"><span>Analyzed source SHA: 2c90166cdcb93664ea793d5df658becc78433fdb</span><span>Base SHA: 5322a1d76a53fd0b9142a14ebd350ffdabfacff8</span></div>
 <p><strong>Before:</strong> the base contains product design and Rust-concepts documentation, but no Rust feedback-analysis application. <strong>After:</strong> this branch adds the CLI, PostgreSQL connector, SQLite reports, and model-assisted identity review. This walkthrough describes the exact source commit above; its own generated artifact is excluded from the code analysis.</p></header>
 <section id="overview"><div class="section-head"><span class="step">01</span><h2>Start here: the complete workflow</h2></div>
 <p>Ship Signal reads customer feedback, identifies explicit feature requests, measures demand, and lets a person decide which requests describe the same underlying need. This PR implements that analysis and identity-review slice. It does not implement the whole feedback-to-ticket-to-PR product.</p>
@@ -376,70 +376,73 @@ cargo run -- report --product fitness-app --state /data/fitness/ship-signal.sqli
 234      }</code></pre></figure><p>This is Unicode lowercasing, not full Unicode case folding: for example, <code>ÉDITER</code> and <code>éditer</code> match, while <code>Straße</code> and <code>STRASSE</code> remain different. Spaces, punctuation, and synonyms are not normalized. Product IDs and identity IDs stay case-sensitive. Without a confirmed mapping, differently cased needs may still be separate unresolved groups. If an external database edit introduces case-equivalent alias rows, the index returns an error rather than choosing an arbitrary mapping.</p>
 <h3 id="identity-lookup">Does Analyze assign an identity?</h3>
 <p><strong>Analyze reuses an existing confirmed identity; it does not create a new one.</strong> It loads the selected product’s confirmed mappings into the lowercase-key index and looks up <code>request.need.to_lowercase()</code>. If nothing matches, it groups by the unresolved need and saves <code>identity: null</code>. “Unmatched” refers to that need having no saved mapping.</p>
-<figure data-source="src/lib.rs" data-start="356" data-end="385"><figcaption>src/lib.rs · lines 356–385 <span>exact source excerpt</span></figcaption><pre><code>356          let aliases = self.need_identity_index(product_id)?;
-357          let mut products: BTreeMap&lt;String, ProductDemand&gt; = BTreeMap::new();
-358          products.entry(product_id.to_owned()).or_default();
-359          // zip doesn&#x27;t match using message_index. That is why the earlier code first sorts
-360          // classifications by index and validates their count and indices.
-361          for (row, classification) in input.feedback.iter().zip(&amp;classifications) {
-362              let product = products.entry(row.product_id.clone()).or_default();
-363              if !classification.needs.is_empty() {
-364                  if let Some(customer) = &amp;row.customer_id {
-365                      product.customers.insert(customer.clone());
-366                  }
-367              }
-368              for request in &amp;classification.needs {
-369                  let identity = aliases
-370                      .get(&amp;request.need.to_lowercase())
-371                      .map(|alias| &amp;alias.identity);
-372                  let key = match identity {
-373                      Some(identity) =&gt; GroupKey::Mapped(identity.clone()),
-374                      None =&gt; GroupKey::Unresolved(request.need.clone()),
-375                  };
-376                  let group = product.needs.entry(key).or_default();
-377                  group.need_texts.insert(request.need.clone());
-378                  if let Some(customer) = &amp;row.customer_id {
-379                      group.customers.insert(customer.clone());
-380                  }
-381                  if let Some(variant) = &amp;request.variant {
-382                      group.variants.insert(variant.clone());
-383                  }
-384                  group.messages.insert(classification.message_index);
-385              }</code></pre></figure>
+<figure data-source="src/lib.rs" data-start="356" data-end="383"><figcaption>src/lib.rs · lines 356–383 <span>exact source excerpt</span></figcaption><pre><code>356          let aliases = self.need_identity_index(product_id)?;
+357          let mut product = ProductDemand::default();
+358          // zip doesn&#x27;t match using message_index. That is why the earlier code first sorts
+359          // classifications by index and validates their count and indices.
+360          for (row, classification) in input.feedback.iter().zip(&amp;classifications) {
+361              if !classification.needs.is_empty() {
+362                  if let Some(customer) = &amp;row.customer_id {
+363                      product.customers.insert(customer.clone());
+364                  }
+365              }
+366              for request in &amp;classification.needs {
+367                  let identity = aliases
+368                      .get(&amp;request.need.to_lowercase())
+369                      .map(|alias| &amp;alias.identity);
+370                  let key = match identity {
+371                      Some(identity) =&gt; GroupKey::Mapped(identity.clone()),
+372                      None =&gt; GroupKey::Unresolved(request.need.clone()),
+373                  };
+374                  let group = product.needs.entry(key).or_default();
+375                  group.need_texts.insert(request.need.clone());
+376                  if let Some(customer) = &amp;row.customer_id {
+377                      group.customers.insert(customer.clone());
+378                  }
+379                  if let Some(variant) = &amp;request.variant {
+380                      group.variants.insert(variant.clone());
+381                  }
+382                  group.messages.insert(classification.message_index);
+383              }</code></pre></figure>
 <p>On a fresh installation the alias table is empty, so all classified needs begin without identities. A previously confirmed <code>Export orders → export-orders</code> mapping can be reused in a later analysis; a new wording such as <code>Download orders</code> still needs review even if it means the same thing.</p>
 <h3 id="demand-math">What are demand results?</h3>
+<p><code>complete_analysis</code> creates one <code>ProductDemand::default()</code> accumulator for the selected product. Every feedback row updates that accumulator directly; an outer map keyed by product ID is no longer needed. The inner <code>product.needs</code> map still groups the product’s many needs. Rust then builds one <code>ProductReport</code>, keeping the existing <code>products</code> array with exactly one entry, even when there is no feedback.</p>
 <p>For the selected product, Rust counts distinct identified customers requesting each grouped need. The denominator is the distinct identified customers who requested any feature in that interval. A customer requesting two needs counts once in each numerator and once in the denominator; repeated messages do not increase that person’s count.</p>
-<figure data-source="src/lib.rs" data-start="387" data-end="417"><figcaption>src/lib.rs · lines 387–417 <span>exact source excerpt</span></figcaption><pre><code>387          let products = products
-388              .into_iter()
-389              .map(|(product_id, product)| {
-390                  let denominator = product.customers.len();
-391                  let needs_identity_review = product
-392                      .needs
-393                      .keys()
-394                      .any(|key| matches!(key, GroupKey::Unresolved(_)));
-395                  let needs = product
-396                      .needs
-397                      .into_iter()
-398                      .map(|(key, demand)| {
-399                          let need_text =
-400                              demand.need_texts.iter().next().cloned().unwrap_or_default();
-401                          let count = demand.customers.len();
-402                          NeedReport {
-403                              need: need_text,
-404                              identity: match key {
-405                                  GroupKey::Mapped(identity) =&gt; Some(identity),
-406                                  GroupKey::Unresolved(_) =&gt; None,
-407                              },
-408                              customer_count: count,
-409                              percentage: if denominator == 0 {
-410                                  0.0
-411                              } else {
-412                                  100.0 * count as f64 / denominator as f64
-413                              },
-414                              qualifies: denominator &gt; 0 &amp;&amp; count &gt; denominator / 4,
-415                              variants: demand.variants.into_iter().collect(),
-416                              message_indices: demand.messages.into_iter().collect(),
-417                          }</code></pre></figure>
+<figure data-source="src/lib.rs" data-start="385" data-end="419"><figcaption>src/lib.rs · lines 385–419 <span>exact source excerpt</span></figcaption><pre><code>385          let denominator = product.customers.len();
+386          let needs_identity_review = product
+387              .needs
+388              .keys()
+389              .any(|key| matches!(key, GroupKey::Unresolved(_)));
+390          let needs = product
+391              .needs
+392              .into_iter()
+393              .map(|(key, demand)| {
+394                  let need_text = demand.need_texts.iter().next().cloned().unwrap_or_default();
+395                  let count = demand.customers.len();
+396                  NeedReport {
+397                      need: need_text,
+398                      identity: match key {
+399                          GroupKey::Mapped(identity) =&gt; Some(identity),
+400                          GroupKey::Unresolved(_) =&gt; None,
+401                      },
+402                      customer_count: count,
+403                      percentage: if denominator == 0 {
+404                          0.0
+405                      } else {
+406                          100.0 * count as f64 / denominator as f64
+407                      },
+408                      qualifies: denominator &gt; 0 &amp;&amp; count &gt; denominator / 4,
+409                      variants: demand.variants.into_iter().collect(),
+410                      message_indices: demand.messages.into_iter().collect(),
+411                  }
+412              })
+413              .collect();
+414          let products = vec![ProductReport {
+415              product_id: product_id.to_owned(),
+416              denominator,
+417              needs_identity_review,
+418              needs,
+419          }];</code></pre></figure>
 <p>With four feature-requesting customers, one requestor gives 25% and does not qualify; two give 50% and do. The nonzero denominator check prevents an empty population from qualifying. Unidentified feedback remains evidence, but does not enter customer counts; bug-only feedback does not enter the feature-request denominator.</p>
 <p>Grouping retains variants and supporting message indices. When several needs share one identity, customers are deduplicated across those needs and the lexicographically first need becomes the group’s displayed need text. Original needs remain in saved classifications.</p>
 <div class="note"><strong>Qualifying demand is not ticket readiness.</strong> If any group lacks an identity, <code>needs_identity_review</code> is true for that product and its grouping is provisional. Another need may describe the same need and change the counts after review. A stable need identity also does not establish implementation scope or cooldown similarity.</div>
@@ -450,46 +453,46 @@ cargo run -- report --product fitness-app --state /data/fitness/ship-signal.sqli
 <p>The DDL is shown in <a href="#state-file">the database-opening code</a>. It declares no foreign keys; links such as <code>reviewed_from</code> are maintained by the application. A fuller database-design HTML guide has been prepared separately under <code>docs/06-database-design/</code>; that local draft is not included in the analyzed source or required to read this walkthrough.</p>
 <h3 id="single-insert">Why is the report ID outside the stored JSON?</h3>
 <p><code>StoredReport</code> contains snapshot data. The report ID and authoritative product ownership come from the SQLite row. SQLite assigns its row ID and returns it from one complete insert that also saves <code>product_id</code>. Rust combines those values with the snapshot to return a public <code>Report</code> containing <code>id</code> and top-level <code>product_id</code> to the CLI. There is no empty placeholder row or second update to inject an ID.</p>
-<figure data-source="src/lib.rs" data-start="428" data-end="442"><figcaption>src/lib.rs · lines 428–442 <span>exact source excerpt</span></figcaption><pre><code>428          let report = StoredReport {
-429              reviewed_from,
-430              start,
-431              end,
-432              input,
-433              classifications,
-434              products,
-435          };
-436          let json = serde_json::to_string(&amp;report)?;
-437          let id: i64 = self.connection.query_row(
-438              &quot;INSERT INTO analysis_reports(product_id, report) VALUES (?1, ?2) RETURNING id&quot;,
-439              params![product_id, json],
-440              |row| row.get(0),
-441          )?;
-442          Ok(report.into_report(id, product_id.to_owned()))</code></pre></figure>
+<figure data-source="src/lib.rs" data-start="420" data-end="434"><figcaption>src/lib.rs · lines 420–434 <span>exact source excerpt</span></figcaption><pre><code>420          let report = StoredReport {
+421              reviewed_from,
+422              start,
+423              end,
+424              input,
+425              classifications,
+426              products,
+427          };
+428          let json = serde_json::to_string(&amp;report)?;
+429          let id: i64 = self.connection.query_row(
+430              &quot;INSERT INTO analysis_reports(product_id, report) VALUES (?1, ?2) RETURNING id&quot;,
+431              params![product_id, json],
+432              |row| row.get(0),
+433          )?;
+434          Ok(report.into_report(id, product_id.to_owned()))</code></pre></figure>
 <p>A report ID such as <code>1</code> identifies a saved report. A need identity such as <code>export-orders</code> identifies a customer goal within a product. A customer ID such as <code>alice</code> identifies the feedback customer. These are different identifiers.</p>
 <h3 id="load-report">What does loading a report later mean?</h3>
-<figure class="example"><figcaption>Example command · display existing report 1 <span>illustrative</span></figcaption><pre><code>cargo run -- report --product demo-shop --state ./ship-signal.sqlite 1</code></pre></figure><figure data-source="src/lib.rs" data-start="444" data-end="466"><figcaption>src/lib.rs · lines 444–466 <span>exact source excerpt</span></figcaption><pre><code>444      pub fn report(&amp;self, product_id: &amp;str, id: i64) -&gt; Result&lt;Report&gt; {
-445          validate_product_id(product_id)?;
-446          let (stored_product, json): (String, String) = self
-447              .connection
-448              .query_row(
-449                  &quot;SELECT product_id, report FROM analysis_reports WHERE id = ?1 AND product_id = ?2&quot;,
-450                  params![id, product_id],
-451                  |row| Ok((row.get(0)?, row.get(1)?)),
-452              )
-453              .context(&quot;report not found for the requested product&quot;)?;
-454          let report: StoredReport = serde_json::from_str(&amp;json)?;
-455          ensure!(
-456              report
-457                  .input
-458                  .feedback
-459                  .iter()
-460                  .all(|row| row.product_id == product_id)
-461                  &amp;&amp; report.products.len() == 1
-462                  &amp;&amp; report.products[0].product_id == product_id,
-463              &quot;saved report data does not match its product scope&quot;
-464          );
-465          Ok(report.into_report(id, stored_product))
-466      }</code></pre></figure>
+<figure class="example"><figcaption>Example command · display existing report 1 <span>illustrative</span></figcaption><pre><code>cargo run -- report --product demo-shop --state ./ship-signal.sqlite 1</code></pre></figure><figure data-source="src/lib.rs" data-start="436" data-end="458"><figcaption>src/lib.rs · lines 436–458 <span>exact source excerpt</span></figcaption><pre><code>436      pub fn report(&amp;self, product_id: &amp;str, id: i64) -&gt; Result&lt;Report&gt; {
+437          validate_product_id(product_id)?;
+438          let (stored_product, json): (String, String) = self
+439              .connection
+440              .query_row(
+441                  &quot;SELECT product_id, report FROM analysis_reports WHERE id = ?1 AND product_id = ?2&quot;,
+442                  params![id, product_id],
+443                  |row| Ok((row.get(0)?, row.get(1)?)),
+444              )
+445              .context(&quot;report not found for the requested product&quot;)?;
+446          let report: StoredReport = serde_json::from_str(&amp;json)?;
+447          ensure!(
+448              report
+449                  .input
+450                  .feedback
+451                  .iter()
+452                  .all(|row| row.product_id == product_id)
+453                  &amp;&amp; report.products.len() == 1
+454                  &amp;&amp; report.products[0].product_id == product_id,
+455              &quot;saved report data does not match its product scope&quot;
+456          );
+457          Ok(report.into_report(id, stored_product))
+458      }</code></pre></figure>
 <p>This command selects row 1 only when its SQL <code>product_id</code> matches <code>demo-shop</code>, then attaches the SQL row ID and product ownership to the JSON snapshot. It validates that embedded feedback and the single product result agree with that ownership. It does not reconnect to PostgreSQL, classify messages again, or regroup using current aliases. Later mappings do not change the old snapshot.</p>
 <p>The current development format uses <code>need</code> consistently and requires <code>analysis_reports.product_id</code>. It expects a fresh SQLite state file; there is no migration for earlier schemas.</p>
 </section><section id="review"><div class="section-head"><span class="step">07</span><h2>Review unresolved needs</h2></div>
