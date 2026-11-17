@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Ship Signal · PR #2 CI walkthrough</title>
+<style>
+:root{color-scheme:dark;--bg:#101820;--panel:#192630;--ink:#eef5f6;--muted:#b3c6cf;--line:#36505e;--accent:#8ce0c2}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.65 system-ui,sans-serif}main{max-width:1050px;margin:auto;padding:40px 28px}h1{font-size:clamp(34px,6vw,58px);line-height:1.12}h2{font-size:27px;margin-top:48px}a{color:var(--accent);text-underline-offset:4px}a:focus-visible{outline:3px solid var(--accent)}nav{display:flex;flex-wrap:wrap;gap:12px 24px;padding:20px 0;border-block:1px solid var(--line)}.meta,figcaption{color:var(--muted);font-size:13px;overflow-wrap:anywhere}pre{overflow:auto;background:#0a1219;border:1px solid var(--line);padding:20px;border-radius:10px}code{font-family:ui-monospace,monospace;font-size:.88em}p code,li code,td code{color:var(--accent)}figure{margin:24px 0}.note{padding:18px 22px;background:var(--panel);border-left:4px solid var(--accent)}table{border-collapse:collapse;width:100%;font-size:15px}th,td{padding:12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.table-wrap{overflow:auto}footer{border-top:1px solid var(--line);margin-top:40px;padding-top:20px;color:var(--muted);font-size:14px}@media(max-width:600px){main{padding:24px 16px}pre{padding:14px}}@media print{body{background:white;color:#15232c}pre{background:#f3f6f7;white-space:pre-wrap}a,p code,li code,td code{color:#16644f}nav{display:none}.note{background:#f3f6f7}}
+</style></head><body><main>
+<header><p>Ship Signal · Code walkthrough · PR #2</p><h1>Two independent jobs.<br>One merge gate.</h1>
+<p class="meta">Analyzed source SHA: 3e87a59b46dcdd912c7694706bbc0dd5cbb45431<br>Base SHA: 3ef709fbef97d659401e4538f6a135c8b2f9cc53</p><p><strong>Before:</strong> development checks were manual, and an ordinary test invocation skipped the real PostgreSQL tests. <strong>After:</strong> pull requests targeting <code>main</code> and pushes to <code>main</code> trigger formatting, Clippy, application tests, and a separate PostgreSQL integration job.</p></header>
+<nav aria-label="Contents"><a href="#flow">01 · Execution flow</a><a href="#rust">02 · Rust checks</a><a href="#postgres">03 · PostgreSQL tests</a><a href="#condition">04 · Clippy correction</a><a href="#merge">05 · Merge requirements</a><a href="#verification">06 · Verification and limits</a></nav>
+<section id="flow"><h2>01 · Start with the event</h2><p>GitHub reads <code>.github/workflows/ci.yml</code>. Its two jobs have no <code>needs</code> dependency, so they can run in parallel when runners are available. Steps within each job run sequentially. Each job uses its own standard Ubuntu runner and a 20-minute timeout.</p>
+<pre><code>PR targeting main / push to main
+  ├── Rust checks
+  │     format → Clippy → application tests
+  └── PostgreSQL integration
+        database health check → fixtures → connector tests
+
+Both required checks must succeed before merging.</code></pre>
+<p>The concurrency key separates pull requests and branch runs. A newer run cancels its superseded run, reducing repeated work. Repository permissions are read-only. A failed command fails its step and job; later normal steps in that job do not run.</p>
+<figure data-source=".github/workflows/ci.yml" data-start="1" data-end="19"><figcaption>.github/workflows/ci.yml · lines 1–19 · exact source excerpt</figcaption><pre><code>  1  name: CI
+  2
+  3  on:
+  4    pull_request:
+  5      branches: [main]
+  6    push:
+  7      branches: [main]
+  8
+  9  permissions:
+ 10    contents: read
+ 11
+ 12  concurrency:
+ 13    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+ 14    cancel-in-progress: true
+ 15
+ 16  env:
+ 17    CARGO_TERM_COLOR: always
+ 18
+ 19  jobs:</code></pre></figure></section>
+<section id="rust"><h2>02 · Rust checks</h2><p>Checkout retrieves the source without retaining Git credentials. The toolchain action installs stable Rust with <code>rustfmt</code> and <code>clippy</code>. The cache action restores Cargo dependencies and reusable build output under the Rust job’s cache key. All action implementations are pinned to commit SHAs.</p>
+<div class="table-wrap"><table><thead><tr><th>Step</th><th>What happens</th><th>Failure means</th></tr></thead><tbody><tr><td>Formatting</td><td><code>cargo fmt --all -- --check</code> compares the code with formatter output.</td><td>Formatting differs. It does not edit files; run <code>cargo fmt --all</code> locally and commit the result.</td></tr><tr><td>Clippy</td><td><code>cargo clippy --locked --all-targets -- -D warnings</code> compiles/checks targets and treats warnings as errors.</td><td>A compiler or lint diagnostic must be resolved.</td></tr><tr><td>Application tests</td><td><code>cargo test --locked --all-targets</code> runs the workflow and CLI tests.</td><td>A test or build failed. The PostgreSQL tests are ignored here and run in the other job.</td></tr></tbody></table></div>
+<p><code>--locked</code> requires the dependency resolution recorded in <code>Cargo.lock</code>. Compilation is already checked by Clippy and tests. The Rust and PostgreSQL jobs use separate cache keys; a cache miss results in a normal build.</p>
+<figure data-source=".github/workflows/ci.yml" data-start="20" data-end="43"><figcaption>.github/workflows/ci.yml · lines 20–43 · exact source excerpt</figcaption><pre><code> 20    rust:
+ 21      name: Rust checks
+ 22      runs-on: ubuntu-latest
+ 23      timeout-minutes: 20
+ 24      steps:
+ 25        - name: Check out source
+ 26          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+ 27          with:
+ 28            persist-credentials: false
+ 29        - name: Install Rust
+ 30          uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+ 31          with:
+ 32            components: rustfmt, clippy
+ 33        - name: Cache Rust dependencies and build output
+ 34          uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+ 35          with:
+ 36            key: rust
+ 37        - name: Check formatting
+ 38          run: cargo fmt --all -- --check
+ 39        - name: Check Clippy warnings
+ 40          run: cargo clippy --locked --all-targets -- -D warnings
+ 41        - name: Run application tests
+ 42          run: cargo test --locked --all-targets
+ 43</code></pre></figure></section>
+<section id="postgres"><h2>03 · PostgreSQL integration</h2><p>GitHub starts a temporary PostgreSQL 17 service with a synthetic database and waits for <code>pg_isready</code>. The service exposes port 5432 to the job. These sample credentials are disposable fixture credentials.</p><p>The fixture step runs <code>psql</code> inside the service container, first loading <code>fixtures/feedback.sql</code>, then <code>fixtures/test_invalid.sql</code>. <code>ON_ERROR_STOP=1</code> makes SQL errors fail the step. The fixtures create the feedback views and restricted reader account. The test process connects through <code>SHIP_SIGNAL_TEST_POSTGRES</code> using that reader account.</p><p><code>--ignored</code> explicitly runs the five connector tests that require a real database. They check interval boundaries, invalid/duplicate rows, timestamp conversion, reader permissions, saved reports, and product isolation. This service contains synthetic data and ends with the job.</p>
+<figure data-source=".github/workflows/ci.yml" data-start="44" data-end="81"><figcaption>.github/workflows/ci.yml · lines 44–81 · exact source excerpt</figcaption><pre><code> 44    postgres:
+ 45      name: PostgreSQL integration
+ 46      runs-on: ubuntu-latest
+ 47      timeout-minutes: 20
+ 48      services:
+ 49        postgres:
+ 50          image: postgres:17
+ 51          env:
+ 52            POSTGRES_DB: ship_signal_feedback
+ 53            POSTGRES_PASSWORD: postgres
+ 54          ports:
+ 55            - 5432:5432
+ 56          options: &gt;-
+ 57            --health-cmd &quot;pg_isready -U postgres -d ship_signal_feedback&quot;
+ 58            --health-interval 5s
+ 59            --health-timeout 5s
+ 60            --health-retries 12
+ 61      env:
+ 62        SHIP_SIGNAL_TEST_POSTGRES: postgresql://feedback_reader:feedback_reader@127.0.0.1:5432/ship_signal_feedback
+ 63      steps:
+ 64        - name: Check out source
+ 65          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+ 66          with:
+ 67            persist-credentials: false
+ 68        - name: Install Rust
+ 69          uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+ 70        - name: Cache Rust dependencies and build output
+ 71          uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+ 72          with:
+ 73            key: postgres
+ 74        - name: Load synthetic feedback fixtures
+ 75          env:
+ 76            POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+ 77          run: |
+ 78            docker exec -i &quot;$POSTGRES_CONTAINER&quot; psql -U postgres -d ship_signal_feedback -v ON_ERROR_STOP=1 &lt; fixtures/feedback.sql
+ 79            docker exec -i &quot;$POSTGRES_CONTAINER&quot; psql -U postgres -d ship_signal_feedback -v ON_ERROR_STOP=1 &lt; fixtures/test_invalid.sql
+ 80        - name: Run PostgreSQL integration tests
+ 81          run: cargo test --locked --test postgres -- --ignored</code></pre></figure></section>
+<section id="condition"><h2>04 · The existing Clippy warning</h2><p>Enabling Clippy exposed one nested condition in <code>complete_analysis</code>. The new condition uses a let-chain: the message must contain at least one feature request, and the row must have an identified customer, before that customer enters the product denominator. This preserves the existing counting behavior; bug-only and unidentified messages still do not increase the denominator.</p>
+<figure data-source="src/lib.rs" data-start="362" data-end="366"><figcaption>src/lib.rs · lines 362–366 · exact source excerpt</figcaption><pre><code>362              if !classification.needs.is_empty()
+363                  &amp;&amp; let Some(customer) = &amp;row.customer_id
+364              {
+365                  product.customers.insert(customer.clone());
+366              }</code></pre></figure></section>
+<section id="merge"><h2>05 · Checks become merge requirements</h2><p><strong>Observed repository configuration:</strong> branch protection on <code>main</code> requires the <code>Rust checks</code> and <code>PostgreSQL integration</code> checks from GitHub Actions. The branch must be up to date, and the requirements apply to administrators. These settings were applied through GitHub’s repository API; they are separate from the committed workflow file.</p><p>Stable job names are the connection between the workflow and branch protection. Renaming a job requires updating its required-check name. A queued, running, failed, or cancelled check is not a successful required check. Human review and merging remain separate actions.</p></section>
+<section id="verification"><h2>06 · Verification and limits</h2><p><strong>Observed local checks:</strong> formatting, Clippy with warnings denied, 19 workflow tests, 4 CLI tests, and all 5 PostgreSQL tests passed. <code>actionlint</code> validated the workflow, and <code>git diff --check</code> passed. Local connector verification used the existing synthetic PostgreSQL fixture. Both GitHub-hosted jobs also passed at the analyzed source commit and started concurrently. Checks on later PR commits are verified separately.</p><p>No live model or production customer database was exercised. Model responses in the tests are controlled; AI provider credentials are unnecessary. The workflow currently covers Ubuntu and PostgreSQL 17. It does not establish compatibility with every operating system or database version. Stable Rust updates can introduce new lint diagnostics.</p><p>The application schema and customer-facing workflow are unchanged. This is CI for Ship Signal’s development repository; it does not define verification requirements for customer repositories. The earlier <a href="pr-1.html">PR #1 walkthrough</a> remains a historical account of its pinned source.</p><p>See the <a href="../../README.md#development-checks">local development commands</a>, the <a href="../../.github/workflows/ci.yml">workflow source</a>, and the <a href="README.md">walkthrough index</a>.</p></section>
+<footer>Offline walkthrough of the source commit above. Its artifact commit is excluded from the analyzed code. Example flow is illustrative; verification results and applied repository settings are labeled as observed.</footer>
+</main></body></html>
