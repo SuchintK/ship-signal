@@ -25,7 +25,7 @@ The first analysis workflow supports a chosen product and interval against a Pos
 
 [GitHub Actions CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`. Two independent jobs run on standard Ubuntu runners:
 
-- **Rust checks:** formatting, Clippy with warnings treated as errors, and application tests. Compilation is checked by Clippy and the tests.
+- **Rust checks:** walkthrough tooling tests and document validation, then formatting, Clippy with warnings treated as errors, and application tests. Compilation is checked by Clippy and the tests.
 - **PostgreSQL integration:** a temporary PostgreSQL 17 service loads both synthetic fixtures, then runs the connector tests that are ignored by the application-test command.
 
 Each job has a 20-minute timeout and a separate Rust build cache. A newer run for the same pull request or branch cancels its superseded run. Model responses are controlled by the tests; no AI provider credentials are needed. Formatting checks report differences without modifying files.
@@ -34,6 +34,8 @@ To run the Rust job's checks locally:
 
 ```sh
 rustup component add rustfmt clippy
+python3 -m unittest discover -s scripts/tests -v
+python3 scripts/walkthrough.py check
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
