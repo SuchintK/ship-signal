@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache Rust dependencies and build output
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: rust
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check Clippy warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Run application tests
+        run: cargo test --locked --all-targets
+
+  postgres:
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: ship_signal_feedback
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ship_signal_feedback"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      SHIP_SIGNAL_TEST_POSTGRES: postgresql://feedback_reader:feedback_reader@127.0.0.1:5432/ship_signal_feedback
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - name: Cache Rust dependencies and build output
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: postgres
+      - name: Load synthetic feedback fixtures
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d ship_signal_feedback -v ON_ERROR_STOP=1 < fixtures/feedback.sql
+          docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d ship_signal_feedback -v ON_ERROR_STOP=1 < fixtures/test_invalid.sql
+      - name: Run PostgreSQL integration tests
+        run: cargo test --locked --test postgres -- --ignored

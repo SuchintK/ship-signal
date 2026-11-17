@@ -21,6 +21,26 @@ The first analysis workflow supports a chosen product and interval against a Pos
 - [Glossary](GLOSSARY.md)
 - [Documentation index](docs/README.md)
 
+## Development checks
+
+[GitHub Actions CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`. Two independent jobs run on standard Ubuntu runners:
+
+- **Rust checks:** formatting, Clippy with warnings treated as errors, and application tests. Compilation is checked by Clippy and the tests.
+- **PostgreSQL integration:** a temporary PostgreSQL 17 service loads both synthetic fixtures, then runs the connector tests that are ignored by the application-test command.
+
+Each job has a 20-minute timeout and a separate Rust build cache. A newer run for the same pull request or branch cancels its superseded run. Model responses are controlled by the tests; no AI provider credentials are needed. Formatting checks report differences without modifying files.
+
+To run the Rust job's checks locally:
+
+```sh
+rustup component add rustfmt clippy
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
+```
+
+For the PostgreSQL job, load both fixtures into a disposable database as described below, set `SHIP_SIGNAL_TEST_POSTGRES` to its reader URL, and run `cargo test --locked --test postgres -- --ignored`. `--locked` keeps compilation on the versions recorded in `Cargo.lock`.
+
 ## PostgreSQL feedback analysis
 
 Install Rust and PostgreSQL, then build with `cargo build`. This initial CLI supports an explicit interval; it does not schedule weekly runs. It stores reports in a separate local SQLite file. Back up that file using SQLite's online backup facilities or while Ship Signal is stopped. Restrict access to the file: it contains copied customer feedback and classifications. Retention and deletion policy remain open. Each saved report belongs to one product, recorded in its SQLite row alongside the report ID. This development schema expects a fresh SQLite file; no migration from earlier schemas is provided.
