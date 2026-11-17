@@ -1,4 +1,4 @@
-use crate::{AnalysisInput, Feedback, FeedbackSource};
+use crate::{AnalysisInput, Feedback, FeedbackSource, validate_product_id};
 use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Utc};
 use native_tls::TlsConnector;
@@ -63,15 +63,21 @@ impl PostgresSource {
     }
 }
 impl FeedbackSource for PostgresSource {
-    fn read(&mut self, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<AnalysisInput> {
+    fn read(
+        &mut self,
+        product_id: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<AnalysisInput> {
+        validate_product_id(product_id)?;
         ensure!(start < end, "interval start must precede end");
         let mut tx = self.client.build_transaction().read_only(true).start()?;
         let query = format!(
-            "SELECT product_id, feedback_source_id, source_message_id, customer_id, submitted_at, feedback_text, source_reference FROM {} WHERE (submitted_at >= $1 AND submitted_at < $2) OR submitted_at IS NULL ORDER BY submitted_at NULLS LAST, product_id, feedback_source_id, source_message_id",
+            "SELECT product_id, feedback_source_id, source_message_id, customer_id, submitted_at, feedback_text, source_reference FROM {} WHERE product_id = $1 AND ((submitted_at >= $2 AND submitted_at < $3) OR submitted_at IS NULL) ORDER BY submitted_at NULLS LAST, feedback_source_id, source_message_id",
             self.view
         );
         let rows = tx
-            .query(&query, &[&start, &end])
+            .query(&query, &[&product_id, &start, &end])
             .context("read feedback view")?;
         tx.commit()?;
         let mut diagnostics = BTreeMap::new();

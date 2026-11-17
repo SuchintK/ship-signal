@@ -4,9 +4,19 @@ use std::collections::BTreeMap;
 
 struct Source(Vec<Feedback>);
 impl FeedbackSource for Source {
-    fn read(&mut self, _: DateTime<Utc>, _: DateTime<Utc>) -> anyhow::Result<AnalysisInput> {
+    fn read(
+        &mut self,
+        product_id: &str,
+        _: DateTime<Utc>,
+        _: DateTime<Utc>,
+    ) -> anyhow::Result<AnalysisInput> {
         Ok(AnalysisInput {
-            feedback: self.0.clone(),
+            feedback: self
+                .0
+                .iter()
+                .filter(|row| row.product_id == product_id)
+                .cloned()
+                .collect(),
             diagnostics: BTreeMap::new(),
         })
     }
@@ -29,6 +39,7 @@ fn completed_report_survives_changed_source_and_classifier() -> anyhow::Result<(
     let mut workflow = Workflow::open(&path)?;
     let mut source = Source(vec![feedback("1", Some("alice"))]);
     let report = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -45,7 +56,7 @@ fn completed_report_survives_changed_source_and_classifier() -> anyhow::Result<(
     source.0.clear();
     drop(workflow);
     let workflow = Workflow::open(&path)?;
-    assert_eq!(workflow.report(report.id)?, report);
+    assert_eq!(workflow.report("shop", report.id)?, report);
     assert_eq!(report.products[0].denominator, 1);
     assert_eq!(report.products[0].needs[0].customer_count, 1);
     assert!(report.products[0].needs[0].qualifies);
@@ -68,6 +79,7 @@ fn counts_distinct_customers_per_product_and_preserves_variant_evidence() -> any
     rows[1].feedback_source_id = "chat".into();
     let mut source = Source(rows);
     let report = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -127,6 +139,7 @@ fn unidentified_and_bug_only_feedback_cannot_qualify() -> anyhow::Result<()> {
         feedback("anonymous", None),
     ]);
     let report = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -170,6 +183,7 @@ fn confirmed_need_identity_connects_needs_across_reports_without_changing_old_ev
         }
     };
     let old = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -181,12 +195,14 @@ fn confirmed_need_identity_connects_needs_across_reports_without_changing_old_ev
     drop(workflow);
     let mut workflow = Workflow::open(&path)?;
     let first = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
         classify("CSV export"),
     )?;
     let second = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-13T00:00:00Z".parse()?,
         "2026-11-20T00:00:00Z".parse()?,
@@ -200,7 +216,7 @@ fn confirmed_need_identity_connects_needs_across_reports_without_changing_old_ev
         second.products[0].needs[0].identity.as_deref(),
         Some("export-data")
     );
-    assert_eq!(workflow.report(old.id)?, old);
+    assert_eq!(workflow.report("shop", old.id)?, old);
     assert!(
         workflow
             .assign_need_identity("shop", "CSV export", "different-need")
@@ -215,6 +231,7 @@ fn confirmed_aliases_combine_demand_only_within_the_same_product() -> anyhow::Re
     let mut workflow = Workflow::open(dir.path().join("state.sqlite"))?;
     workflow.assign_need_identity("shop", "CSV export", "export-data")?;
     workflow.assign_need_identity("shop", "download data as CSV", "export-data")?;
+    workflow.assign_need_identity("other-shop", "Dark mode", "dark")?;
     let mut another_product = feedback("third", Some("alice"));
     another_product.product_id = "other-shop".into();
     let mut source = Source(vec![
@@ -222,51 +239,54 @@ fn confirmed_aliases_combine_demand_only_within_the_same_product() -> anyhow::Re
         feedback("second", Some("bob")),
         another_product,
     ]);
-    let report = workflow.analyze(
+    let classify = |rows: &[Feedback]| {
+        Ok(rows
+            .iter()
+            .enumerate()
+            .map(|(message_index, row)| Classification {
+                message_index,
+                needs: vec![Need {
+                    need: if row.source_message_id == "second" {
+                        "download data as CSV"
+                    } else {
+                        "CSV export"
+                    }
+                    .into(),
+                    variant: Some("CSV".into()),
+                }],
+            })
+            .collect())
+    };
+    let shop = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
-        |_| {
-            Ok(vec![
-                Classification {
-                    message_index: 0,
-                    needs: vec![Need {
-                        need: "CSV export".into(),
-                        variant: Some("CSV".into()),
-                    }],
-                },
-                Classification {
-                    message_index: 1,
-                    needs: vec![Need {
-                        need: "download data as CSV".into(),
-                        variant: Some("CSV".into()),
-                    }],
-                },
-                Classification {
-                    message_index: 2,
-                    needs: vec![Need {
-                        need: "CSV export".into(),
-                        variant: None,
-                    }],
-                },
-            ])
-        },
+        classify,
     )?;
-    let shop = report
-        .products
-        .iter()
-        .find(|p| p.product_id == "shop")
-        .unwrap();
-    assert_eq!(shop.needs.len(), 1);
-    assert_eq!(shop.needs[0].identity.as_deref(), Some("export-data"));
-    assert_eq!(shop.needs[0].customer_count, 2);
-    assert_eq!(shop.needs[0].message_indices, vec![0, 1]);
-    let other = report
-        .products
-        .iter()
-        .find(|p| p.product_id == "other-shop")
-        .unwrap();
-    assert_eq!(other.needs[0].identity, None);
+    let other = workflow.analyze(
+        "other-shop",
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        classify,
+    )?;
+    assert_eq!(shop.product_id, "shop");
+    assert_eq!(shop.products.len(), 1);
+    assert_eq!(shop.products[0].denominator, 2);
+    assert_eq!(shop.products[0].needs.len(), 1);
+    assert_eq!(
+        shop.products[0].needs[0].identity.as_deref(),
+        Some("export-data")
+    );
+    assert_eq!(shop.products[0].needs[0].customer_count, 2);
+    assert_eq!(shop.products[0].needs[0].message_indices, vec![0, 1]);
+    assert_eq!(other.product_id, "other-shop");
+    assert_eq!(other.products.len(), 1);
+    assert_eq!(other.products[0].denominator, 1);
+    assert_eq!(other.products[0].needs[0].identity, None);
+    assert_eq!(workflow.need_identity_aliases("shop")?.len(), 2);
+    assert_eq!(workflow.need_identity_aliases("other-shop")?.len(), 1);
     Ok(())
 }
 
@@ -287,6 +307,7 @@ fn explicit_identity_correction_changes_future_analyses_without_rewriting_histor
     };
     workflow.assign_need_identity("shop", "CSV export", "wrong")?;
     let before = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -299,6 +320,7 @@ fn explicit_identity_correction_changes_future_analyses_without_rewriting_histor
     );
     workflow.correct_need_identity("shop", "CSV export", "wrong", "right")?;
     let after = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-13T00:00:00Z".parse()?,
         "2026-11-20T00:00:00Z".parse()?,
@@ -308,7 +330,7 @@ fn explicit_identity_correction_changes_future_analyses_without_rewriting_histor
         after.products[0].needs[0].identity.as_deref(),
         Some("right")
     );
-    assert_eq!(workflow.report(before.id)?, before);
+    assert_eq!(workflow.report("shop", before.id)?, before);
     Ok(())
 }
 
@@ -322,6 +344,7 @@ fn reviewed_report_recalculates_saved_classifications_after_mapping_without_rewr
         feedback("second", Some("bob")),
     ]);
     let original = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -348,14 +371,14 @@ fn reviewed_report_recalculates_saved_classifications_after_mapping_without_rewr
     workflow.assign_need_identity("shop", "CSV export", "export")?;
     workflow.assign_need_identity("shop", "download CSV", "export")?;
     source.0.clear();
-    let reviewed = workflow.review_report(original.id)?;
+    let reviewed = workflow.review_report("shop", original.id)?;
     assert_ne!(original.id, reviewed.id);
     assert!(!reviewed.products[0].needs_identity_review);
     assert_eq!(reviewed.products[0].needs.len(), 1);
     assert_eq!(reviewed.products[0].needs[0].customer_count, 2);
     assert_eq!(reviewed.input, original.input);
     assert_eq!(reviewed.classifications, original.classifications);
-    assert_eq!(workflow.report(original.id)?, original);
+    assert_eq!(workflow.report("shop", original.id)?, original);
     Ok(())
 }
 
@@ -373,6 +396,7 @@ fn review_queue_shows_unresolved_needs_with_evidence_and_confirmed_candidates() 
     second.text = "I need a CSV download".into();
     let mut source = Source(vec![first, second]);
     let report = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -395,7 +419,7 @@ fn review_queue_shows_unresolved_needs_with_evidence_and_confirmed_candidates() 
             ])
         },
     )?;
-    let queue = workflow.need_review_queue(report.id)?;
+    let queue = workflow.need_review_queue("shop", report.id)?;
     assert_eq!(queue.len(), 1);
     assert_eq!(queue[0].product_id, "shop");
     assert_eq!(queue[0].need, "CSV download");
@@ -411,7 +435,7 @@ fn review_queue_shows_unresolved_needs_with_evidence_and_confirmed_candidates() 
     assert_eq!(queue[0].candidates.len(), 1);
     assert_eq!(queue[0].candidates[0].identity, "export");
     workflow.assign_need_identity("shop", "CSV download", "export")?;
-    assert!(workflow.need_review_queue(report.id)?.is_empty());
+    assert!(workflow.need_review_queue("shop", report.id)?.is_empty());
     Ok(())
 }
 
@@ -427,6 +451,7 @@ fn interactive_review_confirms_suggestions_and_keeps_deferred_needs_unresolved()
         feedback("second", Some("bob")),
     ]);
     let original = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -452,14 +477,21 @@ fn interactive_review_confirms_suggestions_and_keeps_deferred_needs_unresolved()
     let mut input = std::io::Cursor::new(b"1\n4\n");
     let mut output = Vec::new();
     let reviewed = workflow
-        .review_needs(original.id, &mut input, &mut output, false, |item| {
-            assert_eq!(item.candidates[0].identity, "export");
-            Ok(NeedSuggestion {
-                kind: SuggestionKind::Existing,
-                identity: Some("export".into()),
-                reason: "Related export request".into(),
-            })
-        })?
+        .review_needs(
+            "shop",
+            original.id,
+            &mut input,
+            &mut output,
+            false,
+            |item| {
+                assert_eq!(item.candidates[0].identity, "export");
+                Ok(NeedSuggestion {
+                    kind: SuggestionKind::Existing,
+                    identity: Some("export".into()),
+                    reason: "Related export request".into(),
+                })
+            },
+        )?
         .unwrap();
     let output = String::from_utf8(output)?;
     assert!(output.contains("CSV download"));
@@ -478,7 +510,7 @@ fn interactive_review_confirms_suggestions_and_keeps_deferred_needs_unresolved()
             .iter()
             .any(|n| n.identity.is_none() && n.need == "Dark mode")
     );
-    assert_eq!(workflow.report(original.id)?, original);
+    assert_eq!(workflow.report("shop", original.id)?, original);
     Ok(())
 }
 
@@ -492,6 +524,7 @@ fn quitting_review_saves_only_confirmed_decisions_and_can_resume() -> anyhow::Re
         feedback("second", Some("bob")),
     ]);
     let original = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -522,6 +555,7 @@ fn quitting_review_saves_only_confirmed_decisions_and_can_resume() -> anyhow::Re
         })
     };
     let result = workflow.review_needs(
+        "shop",
         original.id,
         &mut std::io::Cursor::new(b"3\nalpha\nq\n"),
         &mut Vec::new(),
@@ -529,9 +563,10 @@ fn quitting_review_saves_only_confirmed_decisions_and_can_resume() -> anyhow::Re
         suggestion,
     )?;
     assert!(result.is_none());
-    assert_eq!(workflow.need_review_queue(original.id)?.len(), 1);
+    assert_eq!(workflow.need_review_queue("shop", original.id)?.len(), 1);
     let resumed = workflow
         .review_needs(
+            "shop",
             original.id,
             &mut std::io::Cursor::new(b"2\nalpha\n"),
             &mut Vec::new(),
@@ -547,7 +582,7 @@ fn quitting_review_saves_only_confirmed_decisions_and_can_resume() -> anyhow::Re
         .unwrap();
     assert!(!resumed.products[0].needs_identity_review);
     assert_eq!(resumed.products[0].needs[0].customer_count, 2);
-    assert_eq!(workflow.report(original.id)?, original);
+    assert_eq!(workflow.report("shop", original.id)?, original);
     Ok(())
 }
 
@@ -558,6 +593,7 @@ fn invalid_model_identity_cannot_write_a_mapping() -> anyhow::Result<()> {
     let mut workflow = Workflow::open(dir.path().join("state.sqlite"))?;
     let mut source = Source(vec![feedback("first", Some("alice"))]);
     let original = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -572,6 +608,7 @@ fn invalid_model_identity_cannot_write_a_mapping() -> anyhow::Result<()> {
         },
     )?;
     let result = workflow.review_needs(
+        "shop",
         original.id,
         &mut std::io::Cursor::new(b"1\n"),
         &mut Vec::new(),
@@ -585,8 +622,8 @@ fn invalid_model_identity_cannot_write_a_mapping() -> anyhow::Result<()> {
         },
     );
     assert!(result.is_err());
-    assert!(workflow.need_identity_aliases()?.is_empty());
-    assert_eq!(workflow.report(original.id)?, original);
+    assert!(workflow.need_identity_aliases("shop")?.is_empty());
+    assert_eq!(workflow.report("shop", original.id)?, original);
     Ok(())
 }
 
@@ -601,6 +638,7 @@ fn deferred_decisions_survive_quit_and_can_be_explicitly_reopened() -> anyhow::R
         feedback("second", Some("bob")),
     ]);
     let original = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -633,6 +671,7 @@ fn deferred_decisions_survive_quit_and_can_be_explicitly_reopened() -> anyhow::R
     assert!(
         workflow
             .review_needs(
+                "shop",
                 original.id,
                 &mut std::io::Cursor::new(b"4\nq\n"),
                 &mut Vec::new(),
@@ -645,6 +684,7 @@ fn deferred_decisions_survive_quit_and_can_be_explicitly_reopened() -> anyhow::R
     let mut workflow = Workflow::open(&path)?;
     let reviewed = workflow
         .review_needs(
+            "shop",
             original.id,
             &mut std::io::Cursor::new(b"3\nbeta\n"),
             &mut Vec::new(),
@@ -662,6 +702,7 @@ fn deferred_decisions_survive_quit_and_can_be_explicitly_reopened() -> anyhow::R
     assert!(reviewed.products[0].needs_identity_review);
     let complete = workflow
         .review_needs(
+            "shop",
             original.id,
             &mut std::io::Cursor::new(b"3\nalpha\n"),
             &mut Vec::new(),
@@ -687,18 +728,18 @@ fn loads_reports_using_the_database_row_id() -> anyhow::Result<()> {
     // The saved JSON omits the ID; loading must use the requested SQLite row's ID.
     let connection = rusqlite::Connection::open(&path)?;
     connection.execute_batch(
-        "CREATE TABLE analysis_reports (id INTEGER PRIMARY KEY, report TEXT NOT NULL);",
+        "CREATE TABLE analysis_reports (id INTEGER PRIMARY KEY, product_id TEXT NOT NULL, report TEXT NOT NULL);",
     )?;
-    let report_content = r#"{"reviewed_from":null,"start":"2026-11-06T00:00:00Z","end":"2026-11-13T00:00:00Z","input":{"feedback":[],"diagnostics":{}},"classifications":[],"products":[]}"#;
+    let report_content = r#"{"reviewed_from":null,"start":"2026-11-06T00:00:00Z","end":"2026-11-13T00:00:00Z","input":{"feedback":[],"diagnostics":{}},"classifications":[],"products":[{"product_id":"shop","denominator":0,"needs_identity_review":false,"needs":[]}]}"#;
     connection.execute(
-        "INSERT INTO analysis_reports(id, report) VALUES (?1, ?2)",
+        "INSERT INTO analysis_reports(id, product_id, report) VALUES (?1, 'shop', ?2)",
         rusqlite::params![41, report_content],
     )?;
     drop(connection);
     let workflow = Workflow::open(&path)?;
-    assert_eq!(workflow.report(41)?.id, 41);
-    assert!(workflow.report(41)?.reviewed_from.is_none());
-    assert!(workflow.report(42).is_err());
+    assert_eq!(workflow.report("shop", 41)?.id, 41);
+    assert!(workflow.report("shop", 41)?.reviewed_from.is_none());
+    assert!(workflow.report("shop", 42).is_err());
     Ok(())
 }
 
@@ -707,11 +748,12 @@ fn saves_and_reopens_report_when_existing_reports_are_write_once() -> anyhow::Re
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("state.sqlite");
     let connection = rusqlite::Connection::open(&path)?;
-    connection.execute_batch("CREATE TABLE analysis_reports (id INTEGER PRIMARY KEY, report TEXT NOT NULL); CREATE TRIGGER reports_are_write_once BEFORE UPDATE ON analysis_reports BEGIN SELECT RAISE(ABORT, 'reports are write once'); END;")?;
+    connection.execute_batch("CREATE TABLE analysis_reports (id INTEGER PRIMARY KEY, product_id TEXT NOT NULL, report TEXT NOT NULL); CREATE TRIGGER reports_are_write_once BEFORE UPDATE ON analysis_reports BEGIN SELECT RAISE(ABORT, 'reports are write once'); END;")?;
     drop(connection);
     let mut workflow = Workflow::open(&path)?;
     let mut source = Source(vec![feedback("1", Some("alice"))]);
     let report = workflow.analyze(
+        "shop",
         &mut source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -727,7 +769,7 @@ fn saves_and_reopens_report_when_existing_reports_are_write_once() -> anyhow::Re
     )?;
     assert!(report.id > 0);
     drop(workflow);
-    assert_eq!(Workflow::open(&path)?.report(report.id)?, report);
+    assert_eq!(Workflow::open(&path)?.report("shop", report.id)?, report);
     Ok(())
 }
 
@@ -737,6 +779,7 @@ fn reports_and_review_inputs_use_need_consistently() -> anyhow::Result<()> {
     let mut workflow = Workflow::open(dir.path().join("state.sqlite"))?;
     workflow.assign_need_identity("shop", "Export orders", "export-orders")?;
     let report = workflow.analyze(
+        "shop",
         &mut Source(vec![feedback("request", Some("alice"))]),
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -757,14 +800,111 @@ fn reports_and_review_inputs_use_need_consistently() -> anyhow::Result<()> {
     );
     assert!(json["classifications"][0]["needs"][0].get("name").is_none());
     assert_eq!(json["products"][0]["needs"][0]["need"], "Download orders");
-    let queue = serde_json::to_value(workflow.need_review_queue(report.id)?)?;
+    let queue = serde_json::to_value(workflow.need_review_queue("shop", report.id)?)?;
     assert_eq!(queue[0]["need"], "Download orders");
     assert_eq!(
         queue[0]["candidates"][0]["needs"],
         serde_json::json!(["Export orders"])
     );
-    let mappings = serde_json::to_value(workflow.need_identity_aliases()?)?;
+    let mappings = serde_json::to_value(workflow.need_identity_aliases("shop")?)?;
     assert_eq!(mappings[0]["need"], "Export orders");
     assert!(mappings[0].get("label").is_none());
+    Ok(())
+}
+
+#[test]
+fn empty_reports_keep_product_ownership_and_reject_cross_product_operations() -> anyhow::Result<()>
+{
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("state.sqlite");
+    let mut workflow = Workflow::open(&path)?;
+    let original = workflow.analyze(
+        "shop",
+        &mut Source(vec![]),
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |rows| {
+            assert!(rows.is_empty());
+            Ok(vec![])
+        },
+    )?;
+    assert_eq!(original.product_id, "shop");
+    assert_eq!(original.products.len(), 1);
+    assert_eq!(original.products[0].product_id, "shop");
+    assert_eq!(original.products[0].denominator, 0);
+    assert!(original.products[0].needs.is_empty());
+    assert!(!original.products[0].needs_identity_review);
+    assert!(workflow.report("other-shop", original.id).is_err());
+    assert!(workflow.review_report("other-shop", original.id).is_err());
+    assert!(
+        workflow
+            .need_review_queue("other-shop", original.id)
+            .is_err()
+    );
+    let result = workflow.review_needs(
+        "other-shop",
+        original.id,
+        &mut std::io::Cursor::new(b"3\nwrong\n"),
+        &mut Vec::new(),
+        true,
+        |_| panic!("a foreign report must not reach the model"),
+    );
+    assert!(result.is_err());
+    assert!(workflow.need_identity_aliases("other-shop")?.is_empty());
+    drop(workflow);
+    let mut workflow = Workflow::open(&path)?;
+    assert_eq!(workflow.report("shop", original.id)?, original);
+    let reviewed = workflow.review_report("shop", original.id)?;
+    assert_eq!(reviewed.product_id, "shop");
+    assert_eq!(reviewed.reviewed_from, Some(original.id));
+    assert_eq!(reviewed.products, original.products);
+    Ok(())
+}
+
+#[test]
+fn a_foreign_source_row_is_rejected_before_classification_or_saving() -> anyhow::Result<()> {
+    struct BrokenSource;
+    impl FeedbackSource for BrokenSource {
+        fn read(
+            &mut self,
+            _: &str,
+            _: DateTime<Utc>,
+            _: DateTime<Utc>,
+        ) -> anyhow::Result<AnalysisInput> {
+            let mut foreign = feedback("foreign", Some("mallory"));
+            foreign.product_id = "other-shop".into();
+            Ok(AnalysisInput {
+                feedback: vec![foreign],
+                diagnostics: BTreeMap::new(),
+            })
+        }
+    }
+    let dir = tempfile::tempdir()?;
+    let mut workflow = Workflow::open(dir.path().join("state.sqlite"))?;
+    let result = workflow.analyze(
+        "shop",
+        &mut BrokenSource,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| panic!("foreign feedback must not reach classification"),
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("outside the requested product")
+    );
+    assert!(workflow.report("shop", 1).is_err());
+    assert!(
+        workflow
+            .analyze(
+                "   ",
+                &mut BrokenSource,
+                "2026-11-06T00:00:00Z".parse()?,
+                "2026-11-13T00:00:00Z".parse()?,
+                |_| panic!("blank product must be rejected")
+            )
+            .is_err()
+    );
     Ok(())
 }

@@ -9,10 +9,15 @@ use std::{
 };
 struct Source;
 impl FeedbackSource for Source {
-    fn read(&mut self, _: DateTime<Utc>, _: DateTime<Utc>) -> anyhow::Result<AnalysisInput> {
+    fn read(
+        &mut self,
+        product_id: &str,
+        _: DateTime<Utc>,
+        _: DateTime<Utc>,
+    ) -> anyhow::Result<AnalysisInput> {
         Ok(AnalysisInput {
             feedback: vec![Feedback {
-                product_id: "shop".into(),
+                product_id: product_id.to_owned(),
                 feedback_source_id: "email".into(),
                 source_message_id: "1".into(),
                 customer_id: Some("alice".into()),
@@ -31,6 +36,7 @@ fn cli_shows_model_suggestion_and_saves_only_a_confirmed_match() -> anyhow::Resu
     let mut workflow = Workflow::open(&path)?;
     workflow.assign_need_identity("shop", "Export data", "export")?;
     let report = workflow.analyze(
+        "shop",
         &mut Source,
         "2026-11-06T00:00:00Z".parse()?,
         "2026-11-13T00:00:00Z".parse()?,
@@ -105,6 +111,8 @@ fn cli_shows_model_suggestion_and_saves_only_a_confirmed_match() -> anyhow::Resu
     let mut child = Command::new(env!("CARGO_BIN_EXE_ship-signal"))
         .args([
             "review-needs",
+            "--product",
+            "shop",
             "--state",
             path.to_str().unwrap(),
             "--report",
@@ -131,8 +139,8 @@ fn cli_shows_model_suggestion_and_saves_only_a_confirmed_match() -> anyhow::Resu
     assert!(stdout.contains("Suggested match: export"));
     assert!(stdout.contains("Saved reviewed report"));
     let workflow = Workflow::open(&path)?;
-    assert!(workflow.need_review_queue(report.id)?.is_empty());
-    assert_eq!(workflow.report(report.id)?, report);
+    assert!(workflow.need_review_queue("shop", report.id)?.is_empty());
+    assert_eq!(workflow.report("shop", report.id)?, report);
     Ok(())
 }
 
@@ -158,8 +166,15 @@ fn cli_maps_and_lists_an_explicit_need() -> anyhow::Result<()> {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    Workflow::open(&path)?.assign_need_identity("other-shop", "Dark mode", "dark")?;
     let output = Command::new(env!("CARGO_BIN_EXE_ship-signal"))
-        .args(["need-identities", "--state", path.to_str().unwrap()])
+        .args([
+            "need-identities",
+            "--product",
+            "shop",
+            "--state",
+            path.to_str().unwrap(),
+        ])
         .output()?;
     assert!(output.status.success());
     let mappings: serde_json::Value = serde_json::from_slice(&output.stdout)?;
@@ -169,5 +184,127 @@ fn cli_maps_and_lists_an_explicit_need() -> anyhow::Result<()> {
             {"product_id":"shop", "need":"Export orders", "identity":"export-orders"}
         ])
     );
+    Ok(())
+}
+
+#[test]
+fn every_command_requires_an_explicit_product() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("state.sqlite");
+    let state = path.to_str().unwrap();
+    let cases = [
+        vec!["validate", "--database-url", "invalid"],
+        vec![
+            "analyze",
+            "--database-url",
+            "invalid",
+            "--state",
+            state,
+            "--start",
+            "2026-11-06T00:00:00Z",
+            "--end",
+            "2026-11-13T00:00:00Z",
+            "--model",
+            "test",
+        ],
+        vec![
+            "review-needs",
+            "--state",
+            state,
+            "--report",
+            "1",
+            "--model",
+            "test",
+        ],
+        vec![
+            "map-need",
+            "--state",
+            state,
+            "--need",
+            "Export orders",
+            "--identity",
+            "export-orders",
+        ],
+        vec!["review-report", "--state", state, "1"],
+        vec!["need-identities", "--state", state],
+        vec!["report", "--state", state, "1"],
+    ];
+    for args in cases {
+        let blank = Command::new(env!("CARGO_BIN_EXE_ship-signal"))
+            .args(&args)
+            .args(["--product", "   "])
+            .output()?;
+        assert!(!blank.status.success());
+        assert!(String::from_utf8_lossy(&blank.stderr).contains("product must be nonempty"));
+        let output = Command::new(env!("CARGO_BIN_EXE_ship-signal"))
+            .args(&args)
+            .output()?;
+        assert!(
+            !output.status.success(),
+            "{} unexpectedly succeeded",
+            args[0]
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("--product"),
+            "{} did not require a product: {}",
+            args[0],
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert!(
+        !path.exists(),
+        "argument validation must precede opening state"
+    );
+    Ok(())
+}
+
+#[test]
+fn cli_rejects_a_report_owned_by_another_product_before_model_use() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("state.sqlite");
+    let mut workflow = Workflow::open(&path)?;
+    let report = workflow.analyze(
+        "shop",
+        &mut Source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| {
+            Ok(vec![Classification {
+                message_index: 0,
+                needs: vec![Need {
+                    need: "Export orders".into(),
+                    variant: None,
+                }],
+            }])
+        },
+    )?;
+    let id = report.id.to_string();
+    for (command, tail) in [
+        ("report", vec![id.as_str()]),
+        ("review-report", vec![id.as_str()]),
+        (
+            "review-needs",
+            vec!["--report", id.as_str(), "--model", "test"],
+        ),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ship-signal"))
+            .args([
+                command,
+                "--product",
+                "other-shop",
+                "--state",
+                path.to_str().unwrap(),
+            ])
+            .args(tail)
+            .env_remove("OPENAI_API_KEY")
+            .output()?;
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("report not found for the requested product")
+        );
+    }
+    assert_eq!(workflow.report("shop", report.id)?, report);
+    assert!(workflow.need_identity_aliases("other-shop")?.is_empty());
     Ok(())
 }

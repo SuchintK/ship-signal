@@ -38,6 +38,8 @@ The accepted minimum logical field contract is:
 | Feedback text | Nonempty text | Yes |
 | Source reference | Text, such as a URL or locator | No |
 
+Run each command for one explicitly supplied product ID. Filter feedback by that product before capturing rows or classifying messages, and calculate diagnostics only for matching rows. Rows with a different or NULL product ID are outside the selected read. Save product ownership even for an empty analysis; loading or reviewing a report requires the same product, and mapping/listing commands operate only on the supplied product. A shared view and SQLite file may still hold several products; analyze them in separate runs.
+
 Treat identifiers as opaque text so numeric IDs, UUIDs, and existing string IDs fit the same contract. A null customer ID is valid unidentified feedback: preserve it but exclude it from demand percentages. Source references are optional because some sources have no link or locator. Exact SQL view definitions, database-specific types, and namespace configuration remain to be specified.
 
 Exclude invalid feedback rows and continue analysis with the valid rows. Report the excluded-row count and validation reasons alongside the result, making clear that demand is calculated from the valid subset. Invalid rows contribute to neither feature customer counts nor the denominator. Valid rows remain subject to the normal demand threshold and ticket eligibility rules; invalid-row exclusions do not block ticket creation. A null customer ID is valid unidentified feedback, not an invalid row. If an excluded historical row is later corrected, the explicit historical recomputation policy applies.

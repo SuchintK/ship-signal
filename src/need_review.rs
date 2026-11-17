@@ -50,21 +50,24 @@ impl Workflow {
     /// Interactively confirm model suggestions. Each decision is saved before moving on.
     pub fn review_needs(
         &mut self,
+        product_id: &str,
         id: i64,
         input: &mut impl BufRead,
         output: &mut impl Write,
         include_deferred: bool,
         mut suggest: impl FnMut(&NeedReviewItem) -> Result<NeedSuggestion>,
     ) -> Result<Option<Report>> {
+        let queue = self.need_review_queue(product_id, id)?;
         let deferred: std::collections::BTreeSet<(String, String)> = {
             let mut statement = self.connection.prepare(
-                "SELECT product_id, need FROM need_review_deferrals WHERE report_id = ?1",
+                "SELECT product_id, need FROM need_review_deferrals WHERE report_id = ?1 AND product_id = ?2",
             )?;
-            let rows = statement.query_map([id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            let rows = statement.query_map(rusqlite::params![id, product_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
             rows.collect::<rusqlite::Result<_>>()?
         };
-        let queue: Vec<_> = self
-            .need_review_queue(id)?
+        let queue: Vec<_> = queue
             .into_iter()
             .filter(|item| {
                 include_deferred
@@ -75,7 +78,7 @@ impl Workflow {
         for original in queue {
             // Refresh candidates after each decision, including newly created identities.
             let Some(item) = self
-                .need_review_queue(id)?
+                .need_review_queue(product_id, id)?
                 .into_iter()
                 .find(|item| item.product_id == original.product_id && item.need == original.need)
             else {
@@ -209,7 +212,7 @@ impl Workflow {
                 }
             }
         }
-        let reviewed = self.review_report(id)?;
+        let reviewed = self.review_report(product_id, id)?;
         writeln!(
             output,
             "Saved reviewed report {} (from {}).",

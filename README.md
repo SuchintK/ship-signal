@@ -6,7 +6,7 @@ Ship Signal turns recurring customer feature requests into evidence-backed Linea
 
 ## Project status
 
-The first analysis workflow supports a chosen interval against a PostgreSQL feedback view. Scheduling, MySQL, ticket investigation, approval, and implementation remain future work.
+The first analysis workflow supports a chosen product and interval against a PostgreSQL feedback view. Scheduling, MySQL, ticket investigation, approval, and implementation remain future work.
 
 ## Planned capabilities
 
@@ -23,7 +23,7 @@ The first analysis workflow supports a chosen interval against a PostgreSQL feed
 
 ## PostgreSQL feedback analysis
 
-Install Rust and PostgreSQL, then build with `cargo build`. This initial CLI supports an explicit interval; it does not schedule weekly runs. It stores reports in a separate local SQLite file. Back up that file using SQLite's online backup facilities or while Ship Signal is stopped. Restrict access to the file: it contains copied customer feedback and classifications. Retention and deletion policy remain open. Reports saved by this version keep their ID in the SQLite row rather than the JSON; earlier program versions cannot read the new report format. Back up the database before rolling back. Existing reports from the earlier format remain readable.
+Install Rust and PostgreSQL, then build with `cargo build`. This initial CLI supports an explicit interval; it does not schedule weekly runs. It stores reports in a separate local SQLite file. Back up that file using SQLite's online backup facilities or while Ship Signal is stopped. Restrict access to the file: it contains copied customer feedback and classifications. Retention and deletion policy remain open. Each saved report belongs to one product, recorded in its SQLite row alongside the report ID. This development schema expects a fresh SQLite file; no migration from earlier schemas is provided.
 
 Expose a PostgreSQL **view** with these exact columns and types:
 
@@ -41,16 +41,20 @@ Cast existing IDs to text in the view. Map timestamps explicitly using the sourc
 
 ```sh
 export FEEDBACK_DATABASE_URL='postgresql://feedback_reader:feedback_reader@localhost:55439/ship_signal_feedback'
-cargo run -- validate --timestamps-mapped-to-utc
+cargo run -- validate --product demo-shop --timestamps-mapped-to-utc
 export OPENAI_API_KEY='your-key'
 export SHIP_SIGNAL_ANALYSIS_MODEL='your-qualified-model'
-cargo run -- analyze --timestamps-mapped-to-utc \
+cargo run -- analyze --product demo-shop --timestamps-mapped-to-utc \
   --start 2026-11-06T00:00:00Z --end 2026-11-13T00:00:00Z \
   --state ./ship-signal.sqlite
-cargo run -- report --state ./ship-signal.sqlite 1
+cargo run -- report --product demo-shop --state ./ship-signal.sqlite 1
 ```
 
-The interval is start-inclusive and end-exclusive. Only product IDs and message text are sent to the configured OpenAI model for classification; feedback text may itself contain personal information. The model must support Rig structured output and should be qualified against representative feedback before production use. Each completed report includes copied inputs, classifications, supporting message indices, variants, counts, percentages, and invalid-row diagnostics. Null submission times cannot be assigned to an interval, so they are reported as invalid for every read. Duplicate message identities within a capture are excluded as ambiguous. Identified customers are counted once per product and need, across sources; unidentified feedback remains evidence but does not enter the denominator.
+Every command requires a nonblank `--product`. A shared view and SQLite file may contain multiple products, but each invocation operates on only the supplied product. PostgreSQL filters by product before capturing messages, validating rows, or calling the classifier. Diagnostics cover only matching rows; rows with a different or NULL product ID are outside this read. Product IDs are exact, case-sensitive opaque strings. Run separate analyses for separate products.
+
+Saved reports retain their product even when there is no feedback: an empty analysis contains one product result with a zero denominator and no needs. `report`, `review-report`, and `review-needs` require both the product and a report ID owned by that product; a mismatch fails before a model request or review decision. `need-identities` lists only the supplied product's mappings. `validate` checks the shared view's schema and timestamp-mapping confirmation; it does not check whether that product has rows. An absent product is valid and an analysis saves an empty result.
+
+The interval is start-inclusive and end-exclusive. Only message indices and text from the selected product are sent to the configured OpenAI model for classification; feedback text may itself contain personal information. The model must support Rig structured output and should be qualified against representative feedback before production use. Each completed report includes copied inputs, classifications, supporting message indices, variants, counts, percentages, and invalid-row diagnostics. Null submission times for the selected product cannot be assigned to an interval, so they are reported as invalid on every read for that product. Duplicate message identities within a capture are excluded as ambiguous. Identified customers are counted once per product and need, across sources; unidentified feedback remains evidence but does not enter the denominator.
 
 ### Need identity across reports
 
@@ -59,7 +63,7 @@ The review queue asks the configured analysis model to suggest a match for each 
 ```sh
 export OPENAI_API_KEY='your-key'
 export SHIP_SIGNAL_ANALYSIS_MODEL='your-qualified-model'
-cargo run -- review-needs --state ./ship-signal.sqlite --report 1
+cargo run -- review-needs --product demo-shop --state ./ship-signal.sqlite --report 1
 ```
 
 Suggestions are never saved as mappings without a person choosing an action. Confirmed mappings and deferrals are saved as they are made; quit with `q` and run the same command to resume. Add `--include-deferred` to revisit needs previously left unresolved for that report. Once the queue has been reviewed, the command saves a separate report from the original feedback and classifications. The original report is unchanged. Deferred needs remain unresolved. For match suggestions the model receives the product ID, need text, candidate IDs and their mapped needs, supporting feedback text, variants, and the distinct-customer count. Feedback may contain personal information. Choose and qualify the model for the task before production use.
@@ -68,8 +72,8 @@ The working identity policy is an implementation choice, not an accepted archite
 
 ```sh
 cargo run -- map-need --state ./ship-signal.sqlite --product demo-shop --need 'CSV export' --identity export-data
-cargo run -- need-identities --state ./ship-signal.sqlite
-cargo run -- review-report --state ./ship-signal.sqlite 1
+cargo run -- need-identities --product demo-shop --state ./ship-signal.sqlite
+cargo run -- review-report --product demo-shop --state ./ship-signal.sqlite 1
 ```
 
 Need text is matched exactly and is case-sensitive. Analysis combines differently worded needs mapped to the same ID for the same product while retaining the original classifications, variants, and messages. Needs with no mapping have `"identity": null`; a product with any unresolved needs has `"needs_identity_review": true`. Its grouping and demand are provisional, so review and map its needs before using its results for ticket decisions. Review is required even when an individual group exceeds the threshold: another request could describe the same need.

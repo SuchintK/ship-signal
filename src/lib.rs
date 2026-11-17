@@ -12,6 +12,11 @@ mod need_review;
 pub mod postgres_source;
 pub use need_review::{NeedSuggestion, SuggestionKind};
 
+pub(crate) fn validate_product_id(product_id: &str) -> Result<()> {
+    ensure!(!product_id.trim().is_empty(), "product must be nonempty");
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Feedback {
     pub product_id: String,
@@ -41,8 +46,15 @@ pub struct AnalysisInput {
     pub feedback: Vec<Feedback>,
     pub diagnostics: BTreeMap<String, usize>,
 }
+/// Reads only one product in the requested interval. Diagnostics cover matching
+/// rows; no matching feedback is valid, and unattributable rows are outside its scope.
 pub trait FeedbackSource {
-    fn read(&mut self, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<AnalysisInput>;
+    fn read(
+        &mut self,
+        product_id: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<AnalysisInput>;
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NeedIdentityAlias {
@@ -84,6 +96,7 @@ pub struct ProductReport {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Report {
     pub id: i64,
+    pub product_id: String,
     pub reviewed_from: Option<i64>,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
@@ -104,9 +117,10 @@ struct StoredReport {
 }
 
 impl StoredReport {
-    fn into_report(self, id: i64) -> Report {
+    fn into_report(self, id: i64, product_id: String) -> Report {
         Report {
             id,
+            product_id,
             reviewed_from: self.reviewed_from,
             start: self.start,
             end: self.end,
@@ -142,7 +156,7 @@ pub struct Workflow {
 impl Workflow {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path)?;
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS analysis_reports (id INTEGER PRIMARY KEY, report TEXT NOT NULL); CREATE TABLE IF NOT EXISTS need_identity_aliases (product_id TEXT NOT NULL, need TEXT NOT NULL, identity TEXT NOT NULL, PRIMARY KEY (product_id, need)); CREATE TABLE IF NOT EXISTS need_review_deferrals (report_id INTEGER NOT NULL, product_id TEXT NOT NULL, need TEXT NOT NULL, PRIMARY KEY (report_id, product_id, need));")?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS analysis_reports (id INTEGER PRIMARY KEY, product_id TEXT NOT NULL, report TEXT NOT NULL); CREATE TABLE IF NOT EXISTS need_identity_aliases (product_id TEXT NOT NULL, need TEXT NOT NULL, identity TEXT NOT NULL, PRIMARY KEY (product_id, need)); CREATE TABLE IF NOT EXISTS need_review_deferrals (report_id INTEGER NOT NULL, product_id TEXT NOT NULL, need TEXT NOT NULL, PRIMARY KEY (report_id, product_id, need));")?;
         Ok(Self { connection })
     }
     /// Assign a product-scoped identity to a need after human review.
@@ -185,9 +199,10 @@ impl Workflow {
         );
         Ok(())
     }
-    pub fn need_identity_aliases(&self) -> Result<Vec<NeedIdentityAlias>> {
-        let mut statement = self.connection.prepare("SELECT product_id, need, identity FROM need_identity_aliases ORDER BY product_id, need")?;
-        let rows = statement.query_map([], |row| {
+    pub fn need_identity_aliases(&self, product_id: &str) -> Result<Vec<NeedIdentityAlias>> {
+        validate_product_id(product_id)?;
+        let mut statement = self.connection.prepare("SELECT product_id, need, identity FROM need_identity_aliases WHERE product_id = ?1 ORDER BY need")?;
+        let rows = statement.query_map([product_id], |row| {
             Ok(NeedIdentityAlias {
                 product_id: row.get(0)?,
                 need: row.get(1)?,
@@ -198,20 +213,30 @@ impl Workflow {
     }
     pub fn analyze(
         &mut self,
+        product_id: &str,
         source: &mut impl FeedbackSource,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         classify: impl FnOnce(&[Feedback]) -> Result<Vec<Classification>>,
     ) -> Result<Report> {
+        validate_product_id(product_id)?;
         ensure!(start < end, "interval start must precede end");
-        let input = source.read(start, end)?;
+        // Feedback for the selected product in the requested interval.
+        let input = source.read(product_id, start, end)?;
+        ensure!(
+            input
+                .feedback
+                .iter()
+                .all(|row| row.product_id == product_id),
+            "feedback source returned rows outside the requested product"
+        );
         let classifications = classify(&input.feedback)?;
-        self.complete_analysis(start, end, input, classifications, None)
+        self.complete_analysis(product_id, start, end, input, classifications, None)
     }
     /// List unresolved needs from saved evidence and product-scoped confirmed identities.
-    pub fn need_review_queue(&self, id: i64) -> Result<Vec<NeedReviewItem>> {
-        let report = self.report(id)?;
-        let aliases = self.need_identity_aliases()?;
+    pub fn need_review_queue(&self, product_id: &str, id: i64) -> Result<Vec<NeedReviewItem>> {
+        let report = self.report(product_id, id)?;
+        let aliases = self.need_identity_aliases(product_id)?;
         let mut result = Vec::new();
         for product in &report.products {
             let mut candidates: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -260,9 +285,10 @@ impl Workflow {
         Ok(result)
     }
     /// Recalculate grouping from saved evidence with the current reviewed mappings.
-    pub fn review_report(&mut self, id: i64) -> Result<Report> {
-        let previous = self.report(id)?;
+    pub fn review_report(&mut self, product_id: &str, id: i64) -> Result<Report> {
+        let previous = self.report(product_id, id)?;
         self.complete_analysis(
+            product_id,
             previous.start,
             previous.end,
             previous.input,
@@ -272,6 +298,7 @@ impl Workflow {
     }
     fn complete_analysis(
         &mut self,
+        product_id: &str,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         input: AnalysisInput,
@@ -305,12 +332,14 @@ impl Workflow {
         let aliases: BTreeMap<(String, String), String> = {
             let mut statement = self
                 .connection
-                .prepare("SELECT product_id, need, identity FROM need_identity_aliases")?;
-            let rows =
-                statement.query_map([], |row| Ok(((row.get(0)?, row.get(1)?), row.get(2)?)))?;
+                .prepare("SELECT product_id, need, identity FROM need_identity_aliases WHERE product_id = ?1")?;
+            let rows = statement.query_map([product_id], |row| {
+                Ok(((row.get(0)?, row.get(1)?), row.get(2)?))
+            })?;
             rows.collect::<rusqlite::Result<_>>()?
         };
         let mut products: BTreeMap<String, ProductDemand> = BTreeMap::new();
+        products.entry(product_id.to_owned()).or_default();
         // zip doesn't match using message_index. That is why the earlier code first sorts
         // classifications by index and validates their count and indices.
         for (row, classification) in input.feedback.iter().zip(&classifications) {
@@ -388,22 +417,33 @@ impl Workflow {
         };
         let json = serde_json::to_string(&report)?;
         let id: i64 = self.connection.query_row(
-            "INSERT INTO analysis_reports(report) VALUES (?1) RETURNING id",
-            params![json],
+            "INSERT INTO analysis_reports(product_id, report) VALUES (?1, ?2) RETURNING id",
+            params![product_id, json],
             |row| row.get(0),
         )?;
-        Ok(report.into_report(id))
+        Ok(report.into_report(id, product_id.to_owned()))
     }
-    pub fn report(&self, id: i64) -> Result<Report> {
-        let json: String = self
+    pub fn report(&self, product_id: &str, id: i64) -> Result<Report> {
+        validate_product_id(product_id)?;
+        let (stored_product, json): (String, String) = self
             .connection
             .query_row(
-                "SELECT report FROM analysis_reports WHERE id = ?1",
-                [id],
-                |row| row.get(0),
+                "SELECT product_id, report FROM analysis_reports WHERE id = ?1 AND product_id = ?2",
+                params![id, product_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .context("report not found")?;
+            .context("report not found for the requested product")?;
         let report: StoredReport = serde_json::from_str(&json)?;
-        Ok(report.into_report(id))
+        ensure!(
+            report
+                .input
+                .feedback
+                .iter()
+                .all(|row| row.product_id == product_id)
+                && report.products.len() == 1
+                && report.products[0].product_id == product_id,
+            "saved report data does not match its product scope"
+        );
+        Ok(report.into_report(id, stored_product))
     }
 }
