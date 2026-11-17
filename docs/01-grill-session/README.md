@@ -38,6 +38,8 @@ The accepted minimum logical field contract is:
 | Feedback text | Nonempty text | Yes |
 | Source reference | Text, such as a URL or locator | No |
 
+Run each command for one explicitly supplied product ID. Filter feedback by that product before capturing rows or classifying messages, and calculate diagnostics only for matching rows. Rows with a different or NULL product ID are outside the selected read. Save product ownership even for an empty analysis; loading or reviewing a report requires the same product, and mapping/listing commands operate only on the supplied product. A shared view and SQLite file may still hold several products; analyze them in separate runs.
+
 Treat identifiers as opaque text so numeric IDs, UUIDs, and existing string IDs fit the same contract. A null customer ID is valid unidentified feedback: preserve it but exclude it from demand percentages. Source references are optional because some sources have no link or locator. Exact SQL view definitions, database-specific types, and namespace configuration remain to be specified.
 
 Exclude invalid feedback rows and continue analysis with the valid rows. Report the excluded-row count and validation reasons alongside the result, making clear that demand is calculated from the valid subset. Invalid rows contribute to neither feature customer counts nor the denominator. Valid rows remain subject to the normal demand threshold and ticket eligibility rules; invalid-row exclusions do not block ticket creation. A null customer ID is valid unidentified feedback, not an invalid row. If an excluded historical row is later corrected, the explicit historical recomputation policy applies.
@@ -91,7 +93,7 @@ These copies remain subject to the retention policy; this does not require indef
 
 Percentages across features can add up to more than 100% because one customer can request multiple features.
 
-Group related requests by the underlying need while retaining differences in requested behavior. For example, email and SMS requests can support the same back-in-stock need, but their delivery preferences must remain visible in the proposed ticket.
+Group related requests by the underlying need while retaining differences in requested behavior. The analysis implementation matches need text to human-confirmed identities without regard to case, within the selected product, while preserving original wording and variant evidence. Case differences do not create another confirmed mapping; synonyms still require review. The classification prompt defines `need` as a concise customer goal and `variant` as an explicit option or JSON null. For example, email and SMS requests can support the same back-in-stock need, but their delivery preferences must remain visible in the proposed ticket.
 
 ## 6. Investigating existing tickets and code
 
@@ -247,6 +249,9 @@ These details must preserve the settled product behavior above.
 
 ## Future scope
 
+- Think through broader handling of inferred needs: customer goals suggested by feedback that does not explicitly request a feature, such as “I couldn't find a way to export my orders.” Explore how to identify and surface these for human review, distinguish them from explicit requests, and handle confirmation. The accepted rule remains that inferred needs are supporting context until a person confirms they belong to a feature request; unconfirmed inference must not enter qualifying demand. No expanded handling has been selected.
+- Revisit the classification architecture for large feedback volumes. The current implementation loads an interval's feedback into memory and sends all messages in one structured model request, so large inputs can exceed model context/output limits and increase memory use, latency, and cost. Investigate alternatives such as paging, bounded batches, controlled concurrency, and resumable processing; async execution alone does not bound request size. Any replacement must preserve saved evidence, consistent need grouping across batches, and distinct-customer demand counts. This is deferred design work: capacity has not been benchmarked and no replacement architecture has been selected.
+- Model-suggested IDs for new needs during identity review. The model could propose an ID that a person accepts or edits before saving; validate that it is nonblank and unused within the product. Currently, a person types new IDs manually. This is an optional idea to revisit, not a committed implementation requirement.
 - Versioned approval and scope snapshots, approval receipts, and automated detection and handling of post-approval requirement changes. MVP uses basic Linear approval and manual coordination of scope changes.
 - Shared development/test database interference, including conflicts affecting other users' data or shared schemas during tests and migrations. MVP relies on a customer-provided application test account and development/test environment.
 

@@ -1,0 +1,6 @@
+{
+  "hooks": {
+    "PostToolUse": [{"matcher": "^Bash$", "hooks": [{"type": "command", "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/pr-walkthrough.py\""}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/pr-walkthrough.py\""}]}]
+  }
+}

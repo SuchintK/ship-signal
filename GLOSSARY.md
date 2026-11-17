@@ -42,8 +42,9 @@ A message directly asking for new or changed product behavior, rather than a nee
 **Inferred need**:
 A possible customer goal interpreted from feedback that does not directly request that behavior. For example, difficulty finding an export could suggest a discoverability problem.
 
-**Underlying need**:
+**Need (underlying need)**:
 The customer goal shared by related requests. Being alerted when an item returns to stock is one need that could have email and SMS variants.
+_Avoid_: Treating "name" and "label" as separate domain concepts for the same need.
 
 **Requested variant**:
 A particular way a customer wants a need addressed, such as email rather than SMS notifications.
