@@ -93,7 +93,7 @@ These copies remain subject to the retention policy; this does not require indef
 
 Percentages across features can add up to more than 100% because one customer can request multiple features.
 
-Group related requests by the underlying need while retaining differences in requested behavior. For example, email and SMS requests can support the same back-in-stock need, but their delivery preferences must remain visible in the proposed ticket.
+Group related requests by the underlying need while retaining differences in requested behavior. The analysis implementation matches need text to human-confirmed identities without regard to case, within the selected product, while preserving original wording and variant evidence. Case differences do not create another confirmed mapping; synonyms still require review. The classification prompt defines `need` as a concise customer goal and `variant` as an explicit option or JSON null. For example, email and SMS requests can support the same back-in-stock need, but their delivery preferences must remain visible in the proposed ticket.
 
 ## 6. Investigating existing tickets and code
 

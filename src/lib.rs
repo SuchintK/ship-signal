@@ -166,16 +166,20 @@ impl Workflow {
             !product_id.trim().is_empty() && !need.trim().is_empty() && !identity.trim().is_empty(),
             "product, need, and identity must be nonempty"
         );
-        self.connection.execute("INSERT INTO need_identity_aliases (product_id, need, identity) VALUES (?1, ?2, ?3) ON CONFLICT(product_id, need) DO NOTHING", params![product_id, need, identity])?;
-        let stored: String = self.connection.query_row(
-            "SELECT identity FROM need_identity_aliases WHERE product_id = ?1 AND need = ?2",
-            params![product_id, need],
-            |row| row.get(0),
-        )?;
-        ensure!(
-            stored == identity,
-            "need already has a different identity; review the existing mapping"
-        );
+        let tx = self.connection.unchecked_transaction()?;
+        let aliases = self.need_identity_index(product_id)?;
+        if let Some(alias) = aliases.get(&need.to_lowercase()) {
+            ensure!(
+                alias.identity == identity,
+                "need already has a different identity; review the existing mapping"
+            );
+        } else {
+            tx.execute(
+                "INSERT INTO need_identity_aliases (product_id, need, identity) VALUES (?1, ?2, ?3)",
+                params![product_id, need, identity],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
     pub fn correct_need_identity(
@@ -192,11 +196,17 @@ impl Workflow {
                 && !identity.trim().is_empty(),
             "product, need, previous identity, and identity must be nonempty"
         );
-        let count = self.connection.execute("UPDATE need_identity_aliases SET identity = ?1 WHERE product_id = ?2 AND need = ?3 AND identity = ?4", params![identity, product_id, need, previous])?;
+        let tx = self.connection.unchecked_transaction()?;
+        let aliases = self.need_identity_index(product_id)?;
+        let alias = aliases.get(&need.to_lowercase()).context(
+            "mapping not found or previous identity changed; list mappings and review before retrying",
+        )?;
+        let count = tx.execute("UPDATE need_identity_aliases SET identity = ?1 WHERE product_id = ?2 AND need = ?3 AND identity = ?4", params![identity, product_id, alias.need, previous])?;
         ensure!(
             count == 1,
             "mapping not found or previous identity changed; list mappings and review before retrying"
         );
+        tx.commit()?;
         Ok(())
     }
     pub fn need_identity_aliases(&self, product_id: &str) -> Result<Vec<NeedIdentityAlias>> {
@@ -210,6 +220,17 @@ impl Workflow {
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+    // Keep original need text for display and evidence; lowercase only the lookup key.
+    fn need_identity_index(&self, product_id: &str) -> Result<BTreeMap<String, NeedIdentityAlias>> {
+        let mut aliases = BTreeMap::new();
+        for alias in self.need_identity_aliases(product_id)? {
+            ensure!(
+                aliases.insert(alias.need.to_lowercase(), alias).is_none(),
+                "multiple need mappings differ only by case; review the saved mappings"
+            );
+        }
+        Ok(aliases)
     }
     pub fn analyze(
         &mut self,
@@ -236,7 +257,10 @@ impl Workflow {
     /// List unresolved needs from saved evidence and product-scoped confirmed identities.
     pub fn need_review_queue(&self, product_id: &str, id: i64) -> Result<Vec<NeedReviewItem>> {
         let report = self.report(product_id, id)?;
-        let aliases = self.need_identity_aliases(product_id)?;
+        let aliases: Vec<_> = self
+            .need_identity_index(product_id)?
+            .into_values()
+            .collect();
         let mut result = Vec::new();
         for product in &report.products {
             let mut candidates: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -254,10 +278,10 @@ impl Workflow {
                 .map(|(identity, needs)| NeedCandidate { identity, needs })
                 .collect();
             for report_need in product.needs.iter().filter(|n| n.identity.is_none()) {
-                if aliases
-                    .iter()
-                    .any(|a| a.product_id == product.product_id && a.need == report_need.need)
-                {
+                if aliases.iter().any(|a| {
+                    a.product_id == product.product_id
+                        && a.need.to_lowercase() == report_need.need.to_lowercase()
+                }) {
                     continue;
                 }
                 let messages = report_need
@@ -329,15 +353,7 @@ impl Workflow {
                 );
             }
         }
-        let aliases: BTreeMap<(String, String), String> = {
-            let mut statement = self
-                .connection
-                .prepare("SELECT product_id, need, identity FROM need_identity_aliases WHERE product_id = ?1")?;
-            let rows = statement.query_map([product_id], |row| {
-                Ok(((row.get(0)?, row.get(1)?), row.get(2)?))
-            })?;
-            rows.collect::<rusqlite::Result<_>>()?
-        };
+        let aliases = self.need_identity_index(product_id)?;
         let mut products: BTreeMap<String, ProductDemand> = BTreeMap::new();
         products.entry(product_id.to_owned()).or_default();
         // zip doesn't match using message_index. That is why the earlier code first sorts
@@ -350,7 +366,9 @@ impl Workflow {
                 }
             }
             for request in &classification.needs {
-                let identity = aliases.get(&(row.product_id.clone(), request.need.clone()));
+                let identity = aliases
+                    .get(&request.need.to_lowercase())
+                    .map(|alias| &alias.identity);
                 let key = match identity {
                     Some(identity) => GroupKey::Mapped(identity.clone()),
                     None => GroupKey::Unresolved(request.need.clone()),

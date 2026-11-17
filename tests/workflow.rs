@@ -908,3 +908,114 @@ fn a_foreign_source_row_is_rejected_before_classification_or_saving() -> anyhow:
     );
     Ok(())
 }
+
+#[test]
+fn need_identity_matching_ignores_case_and_preserves_classifications() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("state.sqlite");
+    let mut workflow = Workflow::open(&path)?;
+    let mut source = Source(vec![
+        feedback("one", Some("alice")),
+        feedback("two", Some("bob")),
+    ]);
+    let classifications = vec![
+        Classification {
+            message_index: 0,
+            needs: vec![Need {
+                need: "Export orders".into(),
+                variant: Some("CSV".into()),
+            }],
+        },
+        Classification {
+            message_index: 1,
+            needs: vec![Need {
+                need: "EXPORT ORDERS".into(),
+                variant: Some("PDF".into()),
+            }],
+        },
+    ];
+    let original = workflow.analyze(
+        "shop",
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| Ok(classifications.clone()),
+    )?;
+    workflow.assign_need_identity("shop", "export orders", "export-orders")?;
+    assert!(workflow.need_review_queue("shop", original.id)?.is_empty());
+    let reviewed = workflow.review_report("shop", original.id)?;
+    assert_eq!(reviewed.classifications, classifications);
+    assert_eq!(reviewed.products[0].needs.len(), 1);
+    assert_eq!(
+        reviewed.products[0].needs[0].identity.as_deref(),
+        Some("export-orders")
+    );
+    assert_eq!(reviewed.products[0].needs[0].customer_count, 2);
+    assert_eq!(reviewed.products[0].needs[0].variants, ["CSV", "PDF"]);
+    assert!(!reviewed.products[0].needs_identity_review);
+    assert_eq!(workflow.report("shop", original.id)?, original);
+    drop(workflow);
+    let mut workflow = Workflow::open(&path)?;
+    let analyzed = workflow.analyze("shop", &mut source, original.start, original.end, |_| {
+        Ok(classifications.clone())
+    })?;
+    assert_eq!(analyzed.products, reviewed.products);
+    assert_eq!(analyzed.classifications, classifications);
+    Ok(())
+}
+
+#[test]
+fn case_insensitive_mappings_are_guarded_and_product_scoped() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut workflow = Workflow::open(dir.path().join("state.sqlite"))?;
+    workflow.assign_need_identity("shop", "Éditer les commandes", "edit-orders")?;
+    workflow.assign_need_identity("shop", "ÉDITER LES COMMANDES", "edit-orders")?;
+    assert_eq!(workflow.need_identity_aliases("shop")?.len(), 1);
+    assert!(
+        workflow
+            .assign_need_identity("shop", "éditer les commandes", "conflict")
+            .is_err()
+    );
+    assert!(
+        workflow
+            .correct_need_identity("shop", "éditer les commandes", "outdated", "corrected")
+            .is_err()
+    );
+    workflow.correct_need_identity("shop", "éditer les commandes", "edit-orders", "corrected")?;
+    assert_eq!(
+        workflow.need_identity_aliases("shop")?[0].identity,
+        "corrected"
+    );
+    assert_eq!(
+        workflow.need_identity_aliases("shop")?[0].need,
+        "Éditer les commandes"
+    );
+    workflow.assign_need_identity("Shop", "ÉDITER LES COMMANDES", "other-product")?;
+    let mut row = feedback("one", Some("alice"));
+    row.text = "ÉDITER LES COMMANDES".into();
+    let mut source = Source(vec![row]);
+    let report = workflow.analyze(
+        "shop",
+        &mut source,
+        "2026-11-06T00:00:00Z".parse()?,
+        "2026-11-13T00:00:00Z".parse()?,
+        |_| {
+            Ok(vec![Classification {
+                message_index: 0,
+                needs: vec![Need {
+                    need: "ÉDITER LES COMMANDES".into(),
+                    variant: None,
+                }],
+            }])
+        },
+    )?;
+    assert_eq!(
+        report.products[0].needs[0].identity.as_deref(),
+        Some("corrected")
+    );
+    assert_eq!(
+        workflow.need_identity_aliases("Shop")?[0].identity,
+        "other-product"
+    );
+    Ok(())
+}
