@@ -2,5 +2,6 @@
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+*.weekly.lock
 .env
 __pycache__/

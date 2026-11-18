@@ -58,7 +58,7 @@ Run analysis **Friday at 9 a.m. in a customer-configured timezone**, covering th
 
 Use a **start-inclusive, end-exclusive** submission interval: `[previous Friday 09:00, current Friday 09:00)`. Feedback submitted exactly at the current Friday's 09:00 cutoff belongs to the new week. Adjacent intervals share a boundary without counting the same submission in both weeks.
 
-If the service misses the scheduled analysis, run it automatically when service returns. Running late does not move the scheduled feedback interval or Saturday's approval deadline. See [weekend execution and failure handling](#10-weekend-execution-and-failure-handling) for scheduling and manual execution rules.
+The first scheduled analysis is at the first Friday cutoff at or after setup. After an outage, analyze the latest due cycle and record earlier unfinished cycles as skipped. Catch-up preserves the recorded interval and Saturday approval deadline. When the timezone changes, start the transition interval at the previous cycle's saved cutoff and end at Friday 09:00 in the new timezone. See [weekend execution and failure handling](#10-weekend-execution-and-failure-handling) for scheduling and manual execution rules.
 
 Calculate:
 

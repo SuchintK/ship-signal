@@ -4,10 +4,10 @@ use clap::{Args as ClapArgs, Parser, Subcommand};
 use rig_agent::prelude::*;
 use rig_core::providers::openai::OpenAI;
 use ship_signal::{
-    Classifications, FeedbackSource, NeedSuggestion, Workflow, mysql_source::MysqlSource,
-    postgres_source::PostgresSource,
+    AnalysisInput, Classification, Classifications, Feedback, FeedbackSource, NeedSuggestion,
+    WeeklyScheduler, Workflow, mysql_source::MysqlSource, postgres_source::PostgresSource,
 };
-use std::path::PathBuf;
+use std::{path::PathBuf, thread, time::Duration};
 
 #[derive(Parser)]
 #[command(name = "ship-signal", about = "Analyze customer feedback")]
@@ -34,7 +34,7 @@ struct FeedbackConnection {
 }
 
 impl FeedbackConnection {
-    fn connect(self) -> Result<Box<dyn FeedbackSource>> {
+    fn connect(&self) -> Result<Box<dyn FeedbackSource>> {
         if self.database_url.starts_with("mysql://") {
             let options =
                 mysql::Opts::from_url(&self.database_url).context("invalid MySQL feedback URL")?;
@@ -65,6 +65,20 @@ impl FeedbackConnection {
     }
 }
 
+impl FeedbackSource for FeedbackConnection {
+    fn read(
+        &mut self,
+        product_id: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<AnalysisInput> {
+        self.connect()
+            .context("connect to scheduled feedback source")?
+            .read(product_id, start, end)
+            .context("read scheduled feedback")
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Validate the shared feedback view contract for a selected product.
@@ -88,6 +102,27 @@ enum Command {
         state: PathBuf,
         #[arg(long, env = "SHIP_SIGNAL_ANALYSIS_MODEL")]
         model: String,
+    },
+    /// Run one product's weekly analysis in the foreground.
+    Schedule {
+        #[arg(long, value_parser = parse_product_id)]
+        product: String,
+        /// IANA timezone for Friday and Saturday cutoffs, such as America/New_York.
+        #[arg(long)]
+        timezone: String,
+        #[command(flatten)]
+        source: FeedbackConnection,
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long, env = "SHIP_SIGNAL_ANALYSIS_MODEL")]
+        model: String,
+    },
+    /// List one product's weekly cycles and saved report IDs.
+    WeeklyCycles {
+        #[arg(long, value_parser = parse_product_id)]
+        product: String,
+        #[arg(long)]
+        state: PathBuf,
     },
     /// Review one product's need matches and save a reviewed report.
     ReviewNeeds {
@@ -158,6 +193,35 @@ Each needs entry must contain both fields:
 - variant: a nonblank string naming an explicitly requested option, such as "CSV", "PDF", "Email", or "SMS"; otherwise JSON null. Preserve conventional acronym casing. Do not guess a variant, use an empty string, or write the string "null". If a message explicitly requests multiple variants of one need, return one entry per variant with the same need.
 Use needs: [] when there is no explicit feature request. Do not add Markdown or commentary."#;
 
+fn classify_feedback(
+    runtime: &tokio::runtime::Runtime,
+    model: &str,
+    feedback: &[Feedback],
+) -> Result<Vec<Classification>> {
+    if feedback.is_empty() {
+        return Ok(vec![]);
+    }
+    let messages: Vec<_> = feedback
+        .iter()
+        .enumerate()
+        .map(|(index, row)| serde_json::json!({"index": index, "text": row.text}))
+        .collect();
+    let prompt = format!(
+        "{CLASSIFICATION_INSTRUCTIONS}\nFeedback: {}",
+        serde_json::to_string(&messages)?
+    );
+    let result = runtime.block_on(async {
+        let provider = OpenAI::from_env().context("OPENAI_API_KEY is required")?;
+        let agent = AgentBuilder::new(provider.completion(model)).build();
+        agent
+            .prompt_typed::<Classifications>(prompt)
+            .await
+            .map(|response| response.output)
+            .context("feedback classification failed")
+    })?;
+    Ok(result.classifications)
+}
+
 fn main() -> Result<()> {
     match Args::parse().command {
         Command::Validate { product, source } => {
@@ -178,31 +242,38 @@ fn main() -> Result<()> {
             let mut workflow = Workflow::open(state)?;
             let runtime = tokio::runtime::Runtime::new()?;
             let report = workflow.analyze(&product, source.as_mut(), start, end, |feedback| {
-                if feedback.is_empty() {
-                    return Ok(vec![]);
-                }
-                let messages: Vec<_> = feedback
-                    .iter()
-                    .enumerate()
-                    .map(|(index, row)| serde_json::json!({"index": index, "text": row.text}))
-                    .collect();
-                let prompt = format!(
-                    "{CLASSIFICATION_INSTRUCTIONS}\nFeedback: {}",
-                    serde_json::to_string(&messages)?
-                );
-                let result = runtime.block_on(async {
-                    let provider = OpenAI::from_env().context("OPENAI_API_KEY is required")?;
-                    let agent = AgentBuilder::new(provider.completion(&model)).build();
-                    agent
-                        .prompt_typed::<Classifications>(prompt)
-                        .await
-                        .map(|response| response.output)
-                        .context("feedback classification failed")
-                })?;
-                Ok(result.classifications)
+                classify_feedback(&runtime, &model, feedback)
             })?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        Command::Schedule {
+            product,
+            timezone,
+            mut source,
+            state,
+            model,
+        } => {
+            anyhow::ensure!(
+                source.timestamps_mapped_to_utc,
+                "explicitly confirm how the view maps source timestamps to UTC"
+            );
+            let mut scheduler = WeeklyScheduler::open(state, &product, &timezone)?;
+            let runtime = tokio::runtime::Runtime::new()?;
+            loop {
+                match scheduler.tick(Utc::now(), &mut source, |feedback| {
+                    classify_feedback(&runtime, &model, feedback)
+                }) {
+                    Ok(Some(cycle)) => println!("{}", serde_json::to_string(&cycle)?),
+                    Ok(None) => {}
+                    Err(error) => eprintln!("Weekly schedule for {product} failed: {error}"),
+                }
+                thread::sleep(Duration::from_secs(30));
+            }
+        }
+        Command::WeeklyCycles { product, state } => println!(
+            "{}",
+            serde_json::to_string_pretty(&Workflow::open(state)?.weekly_cycles(&product)?)?
+        ),
         Command::ReviewNeeds {
             product,
             state,

@@ -6,7 +6,7 @@ Ship Signal turns recurring customer feature requests into evidence-backed Linea
 
 ## Project status
 
-The analysis workflow supports a chosen product and interval against a PostgreSQL or MySQL feedback view. Scheduling, ticket investigation, approval, and implementation remain future work.
+The analysis workflow supports explicit intervals and scheduled weekly runs for a chosen product against a PostgreSQL or MySQL feedback view. Ticket investigation, approval, and implementation remain future work.
 
 ## Planned capabilities
 
@@ -52,7 +52,7 @@ The MySQL suite uses both databases for the report comparison. `--locked` keeps 
 
 ## Feedback analysis
 
-Install Rust and build with `cargo build`. Choose a PostgreSQL or MySQL feedback database. This initial CLI supports an explicit interval; it does not schedule weekly runs. It stores reports in a separate local SQLite file. Back up that file using SQLite's online backup facilities or while Ship Signal is stopped. Restrict access to the file: it contains copied customer feedback and classifications. Retention and deletion policy remain open. Each saved report belongs to one product, recorded in its SQLite row alongside the report ID. This development schema expects a fresh SQLite file; no migration from earlier schemas is provided.
+Install Rust and build with `cargo build`. Choose a PostgreSQL or MySQL feedback database. The CLI saves reports and weekly cycles in a separate local SQLite file on persistent storage. Back up that file using SQLite's online backup facilities or while Ship Signal is stopped. The file contains copied customer feedback and classifications, so restrict access. Retention and deletion policy remain open. The scheduler adds its cycle table when opening an existing state file that supports product-owned reports.
 
 ### Feedback view contract
 
@@ -101,6 +101,24 @@ Every command requires a nonblank `--product`. A shared view and SQLite file may
 Saved reports retain their product even when there is no feedback: an empty analysis contains one product result with a zero denominator and no needs. `report`, `review-report`, and `review-needs` require both the product and a report ID owned by that product; a mismatch fails before a model request or review decision. `need-identities` lists only the supplied product's mappings. `validate` checks the shared view's schema and timestamp-mapping confirmation; it does not check whether that product has rows. An absent product is valid and an analysis saves an empty result.
 
 The interval is start-inclusive and end-exclusive. Cutoffs exclude leap seconds. MySQL query cutoffs must fall within UTC years 1000 through 9999. Only message indices and text from the selected product are sent to the configured OpenAI model for classification; feedback text may itself contain personal information. The model must support Rig structured output and should be qualified against representative feedback before production use. Each completed report includes copied inputs, classifications, supporting message indices, variants, counts, percentages, and invalid-row diagnostics. Null submission times and malformed MySQL calendar dates for the selected product cannot be assigned to an interval, so they are reported as invalid on every read for that product. Duplicate message identities within a capture are excluded as ambiguous. Identified customers are counted once per product and need, across sources; unidentified feedback remains evidence but does not enter the denominator.
+
+### Schedule the weekly analysis
+
+Run the foreground scheduler under a process supervisor on the Ship Signal host. Configure the database and model as above and supply an IANA timezone such as `America/New_York`.
+
+```sh
+cargo run -- schedule --product demo-shop --timezone America/New_York \
+  --state ./ship-signal.sqlite --timestamps-mapped-to-utc
+cargo run -- weekly-cycles --product demo-shop --state ./ship-signal.sqlite
+```
+
+The scheduler checks at startup and every 30 seconds. The first cycle closes at the first Friday 09:00 cutoff at or after setup. Each report covers `[previous Friday cutoff, current Friday cutoff)`. Use `weekly-cycles` from a separate terminal to find the report ID, the assigned timezone, and the original Saturday 09:00 approval cutoff. Pass that report ID to `cargo run -- report --product demo-shop --state ./ship-signal.sqlite REPORT_ID`.
+
+Restart with the same product and state file to resume. If several Fridays passed, the latest due cycle gets a report and earlier unfinished cycles are recorded as skipped. A failed analysis can retry on the next check while it is still the latest due cycle. A crash before the completion transaction commits can repeat a source read or model request. A committed original report is available even if the process stops before printing its ID.
+
+To change the timezone, restart with the new `--timezone`. The change applies to the first Friday whose cutoff is still ahead in both zones. Due cycles retain their assigned timezone and UTC deadlines. The transition week's interval starts at the previous cycle's saved Friday cutoff. If there is no previous cycle yet, both cutoffs of the first feedback interval use its assigned timezone.
+
+One scheduler can hold the SQLite state's adjacent `.weekly.lock` file at a time. Keep that file in place while the scheduler runs. Report commands can still read the state. For concurrent schedulers serving different products, use separate state files. To restore, stop the scheduler, restore the SQLite backup on persistent local storage, and restart against that file with the original product configuration.
 
 ### Classification response format
 
