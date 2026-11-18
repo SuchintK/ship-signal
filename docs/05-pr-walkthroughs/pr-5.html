@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ship Signal · MySQL feedback analysis</title>
+<style>
+:root{color-scheme:dark;--bg:#101820;--panel:#192630;--ink:#eef5f6;--muted:#b3c6cf;--line:#36505e;--accent:#8ce0c2}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.65 system-ui,sans-serif}main{max-width:1050px;margin:auto;padding:40px 28px}h1{font-size:clamp(34px,6vw,58px);line-height:1.12}h2{font-size:27px;margin-top:48px}a{color:var(--accent);text-underline-offset:4px}a:focus-visible{outline:3px solid var(--accent)}nav{display:flex;flex-wrap:wrap;gap:12px 24px;padding:20px 0;border-block:1px solid var(--line)}.meta,figcaption{color:var(--muted);font-size:13px;overflow-wrap:anywhere}pre{overflow:auto;background:#0a1219;border:1px solid var(--line);padding:20px;border-radius:10px}code{font-family:ui-monospace,monospace;font-size:.88em}p code,li code,td code{color:var(--accent)}figure{margin:24px 0}.note{padding:18px 22px;background:var(--panel);border-left:4px solid var(--accent)}table{border-collapse:collapse;width:100%;font-size:15px}th,td{padding:12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.table-wrap{overflow:auto}footer{border-top:1px solid var(--line);margin-top:40px;padding-top:20px;color:var(--muted);font-size:14px}@media(max-width:600px){main{padding:24px 16px}pre{padding:14px}}@media print{body{background:white;color:#15232c}pre{background:#f3f6f7;white-space:pre-wrap}a,p code,li code,td code{color:#16644f}nav{display:none}.note{background:#f3f6f7}}
+</style>
+</head>
+<body><main>
+<header>
+<p>Ship Signal · Code walkthrough · PR #5</p>
+<h1>Analyze feedback from MySQL</h1>
+<p class="meta">Analyzed source SHA: fe33c1a59ac3b01a99354a3095b163919799187e<br>Base SHA: 0110b795642dbc5fa1da29250f76df04f17ba9c5</p>
+<p>Set <code>FEEDBACK_DATABASE_URL</code> to a MySQL connection URL to validate the view and analyze feedback for one product. The resulting report can be loaded from SQLite using the same commands as a PostgreSQL report.</p>
+</header>
+<nav aria-label="Contents">
+<a href="#example">Run an analysis</a>
+<a href="#connect">Choose and validate the source</a>
+<a href="#capture">Capture one product</a>
+<a href="#report">Calculate and save demand</a>
+<a href="#verification">Verify both sources</a>
+</nav>
+<section id="example">
+<h2>Run an analysis</h2>
+<p>These commands use the disposable MySQL fixture. Set <code>SHIP_SIGNAL_ANALYSIS_MODEL</code> and <code>OPENAI_API_KEY</code> before running <code>analyze</code> on feedback. The example SQLite path is local to Ship Signal.</p>
+<pre><code>export FEEDBACK_DATABASE_URL='mysql://feedback_reader:feedback_reader@127.0.0.1:3306/ship_signal_feedback'
+
+cargo run -- validate --product demo-shop --timestamps-mapped-to-utc --mysql-no-tls
+cargo run -- analyze --product demo-shop --timestamps-mapped-to-utc --mysql-no-tls \
+  --start 2026-11-06T00:00:00Z --end 2026-11-13T00:00:00Z --state ./example.sqlite</code></pre>
+<p><strong>Observed in the cross-database test with controlled classifications and a confirmed export mapping:</strong> three distinct customers requested a feature. Two requested order export. The saved export evidence links four messages and retains both CSV and PDF variants.</p>
+<pre><code>Product                  demo-shop
+Demand for export-orders  2 / 3 customers
+Requested variants       CSV, PDF
+Supporting indices       0, 1, 2, 4
+Qualifies above 25%       true</code></pre>
+<p>The commands above show how to run your own analysis. The test supplies the same classifications directly to both workflows, so its counts can be compared exactly. See the <a href="../../README.md#feedback-analysis">view contract and setup</a> to configure your own source.</p>
+</section>
+
+<section id="connect">
+<h2>Choose and validate the source</h2>
+<p>Both commands enter <code>FeedbackConnection::connect</code> in <code>src/main.rs</code>. A <code>mysql://</code> URL selects <code>MysqlSource</code>. MySQL uses the URL’s database unless <code>--schema</code> supplies another one. <code>--view</code> defaults to <code>ship_signal_feedback</code>. TCP uses verified TLS by default. The example disables TLS for the disposable local server.</p>
+<figure data-source="src/main.rs" data-start="37" data-end="57" data-start-anchor="fn connect(self)" data-end-anchor="requires a mysql:// URL"><figcaption>src/main.rs · lines 37–57 <span>exact source excerpt</span></figcaption><pre><code> 37      fn connect(self) -&gt; Result&lt;Box&lt;dyn FeedbackSource&gt;&gt; {
+ 38          if self.database_url.starts_with(&quot;mysql://&quot;) {
+ 39              let options =
+ 40                  mysql::Opts::from_url(&amp;self.database_url).context(&quot;invalid MySQL feedback URL&quot;)?;
+ 41              let tls = options
+ 42                  .get_ssl_opts()
+ 43                  .cloned()
+ 44                  .unwrap_or_default()
+ 45                  .with_danger_skip_domain_validation(false)
+ 46                  .with_danger_accept_invalid_certs(false);
+ 47              let options = mysql::OptsBuilder::from_opts(options)
+ 48                  .prefer_socket(false)
+ 49                  .ssl_opts((!self.mysql_no_tls).then_some(tls));
+ 50              Ok(Box::new(MysqlSource::connect(
+ 51                  options.into(),
+ 52                  self.schema.as_deref(),
+ 53                  &amp;self.view,
+ 54                  self.timestamps_mapped_to_utc,
+ 55              )?))
+ 56          } else {
+ 57              anyhow::ensure!(!self.mysql_no_tls, &quot;--mysql-no-tls requires a mysql:// URL&quot;);</code></pre></figure>
+<p><code>MysqlSource::connect</code> checks the UTC confirmation flag, sets the session timezone to <code>+00:00</code>, and inspects the view metadata. The seven columns use MySQL character strings for text and <code>DATETIME</code> or <code>TIMESTAMP</code> for submission times. The final zero-row SELECT checks read access. <code>validate</code> ends at this step, so an unknown product can still validate successfully.</p>
+</section>
+
+<section id="capture">
+<h2>Capture one product</h2>
+<p><code>Workflow::analyze</code> asks the selected connector to read <code>demo-shop</code> for the requested interval. MySQL begins a read-only transaction and compares the product ID as UTF-8 bytes. A case-insensitive view collation therefore cannot make <code>DEMO-SHOP</code> match <code>demo-shop</code>. Rows with NULL product IDs are outside the read.</p>
+<figure data-source="src/mysql_source.rs" data-start="113" data-end="127" data-start-anchor="let mut tx = self" data-end-anchor=".context(&quot;read MySQL feedback view&quot;)?;"><figcaption>src/mysql_source.rs · lines 113–127 <span>exact source excerpt</span></figcaption><pre><code>113          let mut tx = self
+114              .client
+115              .start_transaction(TxOpts::default().set_access_mode(Some(AccessMode::ReadOnly)))?;
+116          // Compare UTF-8 bytes so connection and view collations cannot equate distinct IDs.
+117          let query = format!(
+118              &quot;SELECT {FEEDBACK_COLUMNS} FROM {}
+119               WHERE CAST(CONVERT(product_id USING utf8mb4) AS BINARY) = CAST(? AS BINARY)
+120                 AND ((submitted_at &gt;= ? AND submitted_at &lt; ?) OR submitted_at IS NULL
+121                      OR YEAR(submitted_at) = 0 OR MONTH(submitted_at) = 0 OR DAYOFMONTH(submitted_at) = 0
+122                      OR DAYOFMONTH(submitted_at) &gt; DAYOFMONTH(LAST_DAY(submitted_at)))&quot;,
+123              self.view
+124          );
+125          let rows = tx
+126              .exec_iter(query, (product_id, start.naive_utc(), end.naive_utc()))
+127              .context(&quot;read MySQL feedback view&quot;)?;</code></pre></figure>
+<p>Valid timestamps are selected from the start inclusive to the end exclusive. Both connectors round SQL cutoffs up to the next microsecond when needed, keeping the original interval in the report. For example, a message stored at <code>10:00:00.123456Z</code> is earlier than an end cutoff of <code>10:00:00.123456001Z</code>. It belongs in that interval.</p>
+<p>The query also selects NULL and malformed dates for the chosen product so shared row validation can count them under <code>submitted_at</code>. Shared validation excludes blank required fields and every occurrence of a duplicated message identity. Valid messages are ordered by timestamp, source ID, and message ID before any indices are assigned. See the <a href="../06-database-design/database-design.html#source">database design</a> for the contract and SQL examples.</p>
+</section>
+
+<section id="report">
+<h2>Calculate and save demand</h2>
+<p>The CLI gives the classifier each message’s index and text. A need is a concise customer goal. A variant is an explicit option such as CSV, or JSON <code>null</code>. In the test, the confirmed product mapping makes <code>éxport orders</code> and <code>Éxport orders</code> resolve to <code>export-orders</code> through the same Unicode lowercase lookup. Saved classifications keep their original wording.</p>
+<p>Alice’s email and chat count once for the need. Bob’s PDF request adds a second customer. An unidentified request stays among the four supporting messages and contributes no customer. Carol’s dark-mode request accounts for the third customer in the denominator. A bug-only message adds no customer to the denominator.</p>
+<p>The workflow inserts one SQLite report row with the selected product, copied evidence, classifications, diagnostics, and results. <code>report --product demo-shop --state ./example.sqlite 1</code> loads report 1 from that file. Use the ID printed by the analysis on an existing file. An empty analysis also records ownership and returns one product result with a zero denominator. The CLI skips the model call when there are no valid rows.</p>
+<figure data-source="src/lib.rs" data-start="431" data-end="437" data-start-anchor="let json = serde_json::to_string(&amp;report)?;" data-end-anchor="Ok(report.into_report(id, product_id.to_owned()))"><figcaption>src/lib.rs · lines 431–437 <span>exact source excerpt</span></figcaption><pre><code>431          let json = serde_json::to_string(&amp;report)?;
+432          let id: i64 = self.connection.query_row(
+433              &quot;INSERT INTO analysis_reports(product_id, report) VALUES (?1, ?2) RETURNING id&quot;,
+434              params![product_id, json],
+435              |row| row.get(0),
+436          )?;
+437          Ok(report.into_report(id, product_id.to_owned()))</code></pre></figure>
+</section>
+
+<section id="verification">
+<h2>Verify both sources</h2>
+<p>Local verification ran against MySQL 8.0.44 and PostgreSQL 14.20, plus temporary SQLite files. The tests cover UTC conversion under a non-UTC MySQL default, interval boundaries, case-sensitive product isolation, invalid and duplicate rows, SELECT-only access, and the CLI’s empty-product path. The parity test asserts equality of the complete report and reopens the MySQL report from SQLite.</p>
+<figure data-source="tests/mysql.rs" data-start="207" data-end="216" data-start-anchor="let report = mysql_workflow.analyze" data-end-anchor="assert!(mysql_workflow.report(&quot;another-product&quot;, report.id).is_err());"><figcaption>tests/mysql.rs · lines 207–216 <span>exact source excerpt</span></figcaption><pre><code>207          let report = mysql_workflow.analyze(product, &amp;mut mysql, start, end, classify)?;
+208          assert_eq!(
+209              report,
+210              pg_workflow.analyze(product, &amp;mut postgres, start, end, classify)?
+211          );
+212          assert_eq!(
+213              report,
+214              Workflow::open(&amp;mysql_state)?.report(product, report.id)?
+215          );
+216          assert!(mysql_workflow.report(&quot;another-product&quot;, report.id).is_err());</code></pre></figure>
+<p>A separate CLI run checked trusted TLS. The required <code>PostgreSQL integration</code> CI job also runs the MySQL suite against MySQL 8.4 and PostgreSQL 17. The model responses in these integration tests are controlled, so model qualification is a separate step.</p>
+</section>
+
+<footer>
+<a href="https://github.com/SuchintK/ship-signal/pull/5">GitHub PR #5</a> ·
+<a href="https://linear.app/suchint/issue/SUC-19/ship-signal-analyze-feedback-from-mysql">Linear SUC-19</a> ·
+<a href="README.md">Walkthrough index</a>
+</footer>
+</main></body></html>
