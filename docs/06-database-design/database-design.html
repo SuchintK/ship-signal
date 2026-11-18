@@ -17,7 +17,7 @@
 <div class="eyebrow">Ship Signal / Engineering guide / 06</div>
 <h1>Database design</h1>
 <p class="lede">Where feedback comes from, how reports are saved, and how a model’s need text becomes a human-confirmed identity.</p>
-<p class="meta">Implemented design · Source commit <code>2a572367f3f9a9e5f1dd1e69b929911fb4ecd0e3</code><br>This guide describes the analysis and need review code at that commit. Wider workflow storage remains to be implemented.</p>
+<p class="meta">Implemented design · Source commit <code>f7b8970576a92e6edbfa93333192ec4ef4a61bb8</code><br>This guide describes the analysis and need review code at that commit. Wider workflow storage remains to be implemented.</p>
 <nav aria-label="Contents">
 <a href="#overview">01 · Two stores</a><a href="#relationships">02 · Relationships</a><a href="#source">03 · Feedback source</a><a href="#tables">04 · SQLite tables</a><a href="#json">05 · Report JSON</a><a href="#identity">06 · Needs &amp; IDs</a><a href="#flow">07 · Write flow</a><a href="#boundaries">08 · Boundaries</a>
 </nav>
@@ -26,11 +26,11 @@
 <section id="overview">
 <span class="number">01 / STORAGE BOUNDARIES</span><h2>Two databases, two responsibilities</h2>
 <div class="grid">
-<article class="card"><span class="tag blue">Customer-owned PostgreSQL</span><h3>The feedback source</h3><p>The customer application owns the original messages. A PostgreSQL view exposes the seven columns Ship Signal understands.</p><p>Ship Signal reads this view in a read-only transaction. It does not save review decisions into the customer’s database.</p></article>
+<article class="card"><span class="tag blue">Customer-owned PostgreSQL or MySQL</span><h3>The feedback source</h3><p>The customer application owns the original messages. A PostgreSQL or MySQL view exposes the seven columns Ship Signal understands.</p><p>Ship Signal reads this view in a read-only transaction. It does not save review decisions into the customer’s database.</p></article>
 <article class="card"><span class="tag">Ship Signal SQLite file</span><h3>The application state</h3><p>A local file selected with <code>--state</code> contains saved reports, confirmed need-to-identity mappings, and deferred review items.</p><p>Accepted deployment: persistent local storage on one host. The SQLite file is separate from the feedback database.</p></article>
 </div>
 <div class="flow" aria-label="Feedback storage flow">
-<div class="card"><h3>PostgreSQL view</h3><p>Read one selected product for <code>[start, end)</code>.</p></div><span class="arrow" aria-hidden="true">→</span>
+<div class="card"><h3>Feedback view</h3><p>Read one selected product for <code>[start, end)</code>.</p></div><span class="arrow" aria-hidden="true">→</span>
 <div class="card"><h3>Rust workflow</h3><p>Validate, classify, group, and count customers.</p></div><span class="arrow" aria-hidden="true">→</span>
 <div class="card"><h3>SQLite report</h3><p>Save the inputs, classifications, diagnostics, and demand result.</p></div>
 </div>
@@ -65,19 +65,20 @@
 </section>
 
 <section id="source">
-<span class="number">03 / POSTGRESQL CONTRACT</span><h2>The customer-facing feedback view</h2>
-<p>The configured view can have any name. The synthetic fixture uses <code>public.ship_signal_feedback</code>. Its underlying application table, <code>customer_feedback</code>, is demo data; real customer tables may have a different shape.</p>
+<span class="number">03 / FEEDBACK CONTRACT</span><h2>The customer-facing feedback view</h2>
+<p>The configured view can have any name. The PostgreSQL fixture uses <code>public.ship_signal_feedback</code>, and the MySQL fixture uses <code>ship_signal_feedback.ship_signal_feedback</code>. Both expose the same seven logical columns from demo data.</p>
 <div class="table-wrap"><table>
-<thead><tr><th>View column</th><th>PostgreSQL type</th><th>Validation / meaning</th></tr></thead>
+<thead><tr><th>View column</th><th>PostgreSQL type</th><th>MySQL type</th><th>Validation / meaning</th></tr></thead>
 <tbody>
-<tr><td><code>product_id</code></td><td><code>text</code></td><td>Required, nonblank. Separates product demand and identity mappings.</td></tr>
-<tr><td><code>feedback_source_id</code></td><td><code>text</code></td><td>Required, nonblank. Source namespace, such as <code>email</code> or <code>chat</code>.</td></tr>
-<tr><td><code>source_message_id</code></td><td><code>text</code></td><td>Required, nonblank. Stable message ID within the product and source.</td></tr>
-<tr><td><code>customer_id</code></td><td><code>text</code></td><td>May be NULL for unidentified feedback. A non-NULL blank value is invalid. Identifies a feedback customer within a product.</td></tr>
-<tr><td><code>submitted_at</code></td><td><code>timestamp with time zone</code></td><td>Required. Source timezone mapping must be explicitly confirmed.</td></tr>
-<tr><td><code>feedback_text</code></td><td><code>text</code></td><td>Required, nonblank. The message sent for classification.</td></tr>
-<tr><td><code>source_reference</code></td><td><code>text</code></td><td>Optional pointer to the original message. NULL is allowed.</td></tr>
+<tr><td><code>product_id</code></td><td><code>text</code></td><td>Character string</td><td>Required, nonblank. Separates product demand and identity mappings.</td></tr>
+<tr><td><code>feedback_source_id</code></td><td><code>text</code></td><td>Character string</td><td>Required, nonblank. Source namespace, such as <code>email</code> or <code>chat</code>.</td></tr>
+<tr><td><code>source_message_id</code></td><td><code>text</code></td><td>Character string</td><td>Required, nonblank. Stable message ID within the product and source.</td></tr>
+<tr><td><code>customer_id</code></td><td><code>text</code></td><td>Character string</td><td>May be NULL for unidentified feedback. A non-NULL blank value is invalid. Identifies a feedback customer within a product.</td></tr>
+<tr><td><code>submitted_at</code></td><td><code>timestamp with time zone</code></td><td><code>DATETIME</code> or <code>TIMESTAMP</code></td><td>Required. Source timezone mapping must be explicitly confirmed.</td></tr>
+<tr><td><code>feedback_text</code></td><td><code>text</code></td><td>Character string</td><td>Required, nonblank. The message sent for classification.</td></tr>
+<tr><td><code>source_reference</code></td><td><code>text</code></td><td>Character string</td><td>Optional pointer to the original message. NULL is allowed.</td></tr>
 </tbody></table></div>
+<p>MySQL character strings can use <code>CHAR</code>, <code>VARCHAR</code>, or the <code>TEXT</code> family. Both engines check types during setup and apply nullability rules to the selected rows during capture.</p>
 <p><strong>Logical message key:</strong> <code>(product_id, feedback_source_id, source_message_id)</code>. Among rows that pass field validation in a read, every occurrence of a duplicated key is excluded. This is application validation; Ship Signal does not add a unique constraint to the customer’s view.</p>
 <pre><code>-- From fixtures/feedback.sql; synthetic source times are known to be UTC.
 CREATE VIEW ship_signal_feedback AS
@@ -89,9 +90,19 @@ SELECT 'demo-shop'::text AS product_id,
        message::text AS feedback_text,
        NULL::text AS source_reference
 FROM customer_feedback;</code></pre>
-<p>Every command requires <code>--product</code>. The reader first filters <code>product_id = supplied_product</code>, then selects <code>submitted_at &gt;= start AND submitted_at &lt; end</code> plus NULL timestamps for that product. Matching NULL timestamps are counted as invalid; other products and rows without a product ID are outside this read and its diagnostics. The report saves valid rows and exclusion counts/reasons; excluded raw messages are not copied into the report.</p>
-<div class="callout warm"><p><strong>A timestamp type cannot verify the original timezone.</strong> <code>--timestamps-mapped-to-utc</code> confirms for this invocation that the customer team has mapped source times correctly in the view. This confirmation is checked, not saved in application state. For a local source time in another timezone, the view must use that actual timezone. The flag does not repair an incorrect conversion.</p></div>
-<p class="muted">Implementation: <a href="../../src/postgres_source.rs">src/postgres_source.rs</a> · Fixture: <a href="../../fixtures/feedback.sql">fixtures/feedback.sql</a></p>
+<pre><code>-- From fixtures/mysql_feedback.sql; this DATETIME source is already in UTC.
+CREATE VIEW ship_signal_feedback AS
+SELECT 'demo-shop' AS product_id,
+       channel AS feedback_source_id,
+       CAST(id AS CHAR CHARACTER SET utf8mb4) AS source_message_id,
+       customer_id,
+       CONVERT_TZ(submitted_local, '+00:00', '+00:00') AS submitted_at,
+       message AS feedback_text,
+       CAST(NULL AS CHAR(200)) AS source_reference
+FROM customer_feedback;</code></pre>
+<p>Every command requires <code>--product</code>. The database filters by the exact product ID and applies <code>submitted_at &gt;= start AND submitted_at &lt; end</code>. The read also includes NULL timestamps and malformed MySQL dates for that product as invalid rows. MySQL compares the product ID as UTF-8 bytes so the database collation cannot fold case, accents, or trailing spaces. Other products and rows without a product ID are outside the read and its diagnostics. The report saves valid rows and exclusion counts/reasons; excluded raw messages are not copied into the report.</p>
+<div class="callout warm"><p><strong>A timestamp type cannot verify the original timezone.</strong> <code>--timestamps-mapped-to-utc</code> confirms for this invocation that the customer team has mapped source times correctly in the view. This confirmation is checked, not saved in application state. For a local source time in another timezone, the view must use that actual timezone. MySQL sessions use UTC for <code>TIMESTAMP</code> values. The view must expose MySQL <code>DATETIME</code> values in UTC.</p></div>
+<p class="muted">Source and fixtures for <a href="../../src/postgres_source.rs">PostgreSQL</a> (<a href="../../fixtures/feedback.sql">SQL</a>) and <a href="../../src/mysql_source.rs">MySQL</a> (<a href="../../fixtures/mysql_feedback.sql">SQL</a>). See <a href="../../README.md#feedback-analysis">connection and CLI setup</a>.</p>
 </section>
 
 <section id="tables">
@@ -219,12 +230,12 @@ Need { need: "Export orders", variant: Some("CSV") }
 <section id="flow">
 <span class="number">07 / READS &amp; WRITES</span><h2>Follow one analysis through review</h2>
 <ol class="steps">
-<li><strong>Read the customer view for the supplied product.</strong> Filter in PostgreSQL before capture. Validate matching rows, exclude invalid messages, and collect diagnostics. This step makes no source-database writes.</li>
+<li><strong>Read the customer view for the supplied product.</strong> Filter in the feedback database before capture. Both connectors use the same row validation and order valid messages by submission time, source ID, and message ID before assigning classifier indices. This step makes no source-database writes.</li>
 <li><strong>Classify the valid messages.</strong> The model returns need texts and optional variants. Rust validates the classification shape and message indices.</li>
 <li><strong>Read current aliases and calculate demand.</strong> Reuse confirmed mappings without regard to need-text case. Count each identified customer once per need and once in the product denominator when they made any explicit feature request. Preserve unidentified feedback as evidence while excluding it from counts.</li>
 <li><strong>Insert report 1.</strong> Serialize the complete snapshot, then execute one <code>INSERT INTO analysis_reports(product_id, report) VALUES (?1, ?2) RETURNING id</code>. There is no placeholder insert followed by a JSON update.</li>
 <li><strong>Review unresolved needs.</strong> Read report 1 and same-product aliases to build the queue. A confirmed decision inserts a mapping immediately; a deferral inserts a report-scoped deferral row. These decisions survive quitting or interruption.</li>
-<li><strong>Insert reviewed report 2.</strong> On review completion, recalculate from report 1’s saved inputs and classifications using current mappings. Save a new row with <code>reviewed_from: 1</code>. This step does not reread PostgreSQL or rerun classification. Deferred needs can leave the new report provisional.</li>
+<li><strong>Insert reviewed report 2.</strong> On review completion, recalculate from report 1’s saved inputs and classifications using current mappings. Save a new row with <code>reviewed_from: 1</code>. This step uses the inputs and classifications already in SQLite. Deferred needs can leave the new report provisional.</li>
 </ol>
 <div class="grid">
 <article class="card"><h3>What changes?</h3><p>The alias table gains the confirmed mapping. In report 2, the example need has <code>identity: "export-orders"</code> and the product’s review flag becomes false if no unresolved needs remain.</p></article>
@@ -248,7 +259,9 @@ Need { need: "Export orders", variant: Some("CSV") }
 <ul>
 <li><a href="../../src/lib.rs">src/lib.rs</a> — table creation, report types, mappings, demand grouping, and report persistence.</li>
 <li><a href="../../src/need_review.rs">src/need_review.rs</a> — interactive queue, confirmed decisions, deferrals, and reviewed report creation.</li>
-<li><a href="../../src/postgres_source.rs">src/postgres_source.rs</a> — PostgreSQL view contract and row validation.</li>
+<li><a href="../../src/postgres_source.rs">src/postgres_source.rs</a> — PostgreSQL view validation and reads.</li>
+<li><a href="../../src/mysql_source.rs">src/mysql_source.rs</a> — MySQL view validation, UTC session setup, and reads.</li>
+<li><a href="../../src/feedback_row.rs">src/feedback_row.rs</a> — shared row validation, duplicate exclusion, and message ordering.</li>
 <li><a href="../03-adr/0003-use-sqlite-for-single-host-mvp-state.md">ADR-0003</a> — accepted SQLite and single-host boundary.</li>
 <li><a href="../03-adr/0005-preserve-weekly-feedback-evidence-and-require-explicit-historical-corrections.md">ADR-0005</a> — accepted saved-evidence and historical-correction policy.</li>
 <li><a href="../04-mvp-spec/README.md">MVP specification</a> and <a href="../05-pr-walkthroughs/pr-1.html">PR #1 walkthrough</a> — broader scope and code explanation.</li>
