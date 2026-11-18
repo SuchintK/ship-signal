@@ -12,7 +12,9 @@ mod feedback_row;
 pub mod mysql_source;
 mod need_review;
 pub mod postgres_source;
+mod weekly_schedule;
 pub use need_review::{NeedSuggestion, SuggestionKind};
+pub use weekly_schedule::{WeeklyCycle, WeeklyCycleStatus, WeeklyScheduler};
 
 pub(crate) fn validate_product_id(product_id: &str) -> Result<()> {
     ensure!(!product_id.trim().is_empty(), "product must be nonempty");
@@ -119,6 +121,16 @@ struct StoredReport {
 }
 
 impl StoredReport {
+    fn save(self, connection: &Connection, product_id: &str) -> Result<Report> {
+        let json = serde_json::to_string(&self)?;
+        let id = connection.query_row(
+            "INSERT INTO analysis_reports(product_id, report) VALUES (?1, ?2) RETURNING id",
+            params![product_id, json],
+            |row| row.get(0),
+        )?;
+        Ok(self.into_report(id, product_id.to_owned()))
+    }
+
     fn into_report(self, id: i64, product_id: String) -> Report {
         Report {
             id,
@@ -159,6 +171,7 @@ impl Workflow {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path)?;
         connection.execute_batch("CREATE TABLE IF NOT EXISTS analysis_reports (id INTEGER PRIMARY KEY, product_id TEXT NOT NULL, report TEXT NOT NULL); CREATE TABLE IF NOT EXISTS need_identity_aliases (product_id TEXT NOT NULL, need TEXT NOT NULL, identity TEXT NOT NULL, PRIMARY KEY (product_id, need)); CREATE TABLE IF NOT EXISTS need_review_deferrals (report_id INTEGER NOT NULL, product_id TEXT NOT NULL, need TEXT NOT NULL, PRIMARY KEY (report_id, product_id, need));")?;
+        weekly_schedule::initialize(&connection)?;
         Ok(Self { connection })
     }
     /// Assign a product-scoped identity to a need after human review.
@@ -242,6 +255,18 @@ impl Workflow {
         end: DateTime<Utc>,
         classify: impl FnOnce(&[Feedback]) -> Result<Vec<Classification>>,
     ) -> Result<Report> {
+        self.analyzed_report(product_id, source, start, end, classify)?
+            .save(&self.connection, product_id)
+    }
+
+    fn analyzed_report(
+        &self,
+        product_id: &str,
+        source: &mut (impl FeedbackSource + ?Sized),
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        classify: impl FnOnce(&[Feedback]) -> Result<Vec<Classification>>,
+    ) -> Result<StoredReport> {
         validate_product_id(product_id)?;
         ensure!(start < end, "interval start must precede end");
         // Feedback for the selected product in the requested interval.
@@ -255,7 +280,7 @@ impl Workflow {
         );
         // Classify the feedback
         let classifications = classify(&input.feedback)?;
-        self.complete_analysis(product_id, start, end, input, classifications, None)
+        self.build_report(product_id, start, end, input, classifications, None)
     }
     /// List unresolved needs from saved evidence and product-scoped confirmed identities.
     pub fn need_review_queue(&self, product_id: &str, id: i64) -> Result<Vec<NeedReviewItem>> {
@@ -314,24 +339,25 @@ impl Workflow {
     /// Recalculate grouping from saved evidence with the current reviewed mappings.
     pub fn review_report(&mut self, product_id: &str, id: i64) -> Result<Report> {
         let previous = self.report(product_id, id)?;
-        self.complete_analysis(
+        self.build_report(
             product_id,
             previous.start,
             previous.end,
             previous.input,
             previous.classifications,
             Some(id),
-        )
+        )?
+        .save(&self.connection, product_id)
     }
-    fn complete_analysis(
-        &mut self,
+    fn build_report(
+        &self,
         product_id: &str,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         input: AnalysisInput,
         mut classifications: Vec<Classification>,
         reviewed_from: Option<i64>,
-    ) -> Result<Report> {
+    ) -> Result<StoredReport> {
         ensure!(
             classifications.len() == input.feedback.len(),
             "classifier must return one classification per message"
@@ -420,21 +446,14 @@ impl Workflow {
             needs_identity_review,
             needs,
         }];
-        let report = StoredReport {
+        Ok(StoredReport {
             reviewed_from,
             start,
             end,
             input,
             classifications,
             products,
-        };
-        let json = serde_json::to_string(&report)?;
-        let id: i64 = self.connection.query_row(
-            "INSERT INTO analysis_reports(product_id, report) VALUES (?1, ?2) RETURNING id",
-            params![product_id, json],
-            |row| row.get(0),
-        )?;
-        Ok(report.into_report(id, product_id.to_owned()))
+        })
     }
     pub fn report(&self, product_id: &str, id: i64) -> Result<Report> {
         validate_product_id(product_id)?;
