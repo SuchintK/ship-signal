@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ship Signal · From demand to Linear work</title>
+<style>
+:root{color-scheme:dark;--bg:#101820;--panel:#192630;--ink:#eef5f6;--muted:#b3c6cf;--line:#36505e;--accent:#8ce0c2}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding:24px}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.65 system-ui,sans-serif}
+header{max-width:1040px;margin:auto;padding:40px 24px 18px}h1{font-size:clamp(34px,6vw,54px);line-height:1.1;margin:.25em 0}
+.layout{max-width:1040px;margin:auto;padding:0 24px 48px;display:grid;grid-template-columns:185px minmax(0,1fr);gap:36px}
+nav{position:sticky;align-self:start;top:24px;padding:12px 0;border-block:1px solid var(--line)}
+nav ul{margin:0;padding-left:20px}nav li{margin:6px 0;font-size:14px}
+a{color:var(--accent);text-underline-offset:4px}a:focus-visible{outline:3px solid var(--accent)}
+h2{font-size:26px;line-height:1.2;margin:34px 0 10px}h3{font-size:19px;margin:24px 0 10px}
+.meta,figcaption,small{color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+pre{overflow:auto;background:#0a1219;border:1px solid var(--line);padding:16px;border-radius:8px}
+figure{margin:18px 0 24px}figure pre{margin-top:5px}
+code{font-family:ui-monospace,monospace;font-size:.88em}
+p code,li code,td code{color:var(--accent);overflow-wrap:anywhere}
+.note{padding:12px 16px;background:var(--panel);border-left:4px solid var(--accent)}
+table{width:100%;border-collapse:collapse;font-size:15px}th,td{text-align:left;vertical-align:top;padding:8px 12px;border-bottom:1px solid var(--line)}
+@media(max-width:720px){.layout{display:block}nav{position:static}}
+@media print{body{background:white;color:#15232c}.layout{display:block}nav{display:none}pre,.note{background:#f3f6f7;white-space:pre-wrap}a,p code,li code,td code{color:#16644f}}
+</style>
+</head>
+<body>
+<header>
+<p class="meta">Ship Signal · PR #8 · SUC-21</p>
+<h1>From demand to Linear work</h1>
+<p>One qualifying stock-alert need can produce an evidence comment on existing email work and a separate proposal for SMS.</p>
+<p class="meta">Analyzed source SHA: 092f87ad4ef22a0c080694590f760b670c031e56<br>Base SHA: ac10b2512e1dc534e1f54807c42c4bfafd3672ac</p>
+</header>
+<div class="layout">
+<nav aria-label="Walkthrough contents">
+<ul>
+<li><a href="#example">Try the example</a></li>
+<li><a href="#entry">Enter the workflow</a></li>
+<li><a href="#assess">Investigate demand</a>
+<ul><li><a href="#outcomes">Choose an outcome</a></li></ul>
+</li>
+<li><a href="#write">Save and send</a>
+<ul><li><a href="#recovery">Resume safely</a></li></ul>
+</li>
+<li><a href="#verification">Verification</a></li>
+</ul>
+</nav>
+<main>
+<section id="example">
+<h2>Try the example</h2>
+<p>Start with a saved report containing four feature-requesting customers. One asks for an email when stock returns and another asks for SMS. Those requests support the same stock-alert need, so the report shows 2 of 4 customers, or 50%. An existing Linear ticket covers email only.</p>
+<pre><code>cargo run -- investigate --product shop --state ./ship-signal.sqlite \
+  --report 1 --config ./investigation.json --model YOUR_MODEL</code></pre>
+<p>The controlled test exercises the same workflow behind this command. These are the findings from its fixture.</p>
+<table>
+<thead><tr><th scope="col">Requested behavior</th><th scope="col">Result</th></tr></thead>
+<tbody>
+<tr><td>Email</td><td><code>matching_work</code> adds an evidence comment to the existing email ticket.</td></tr>
+<tr><td>SMS</td><td><code>proposal</code> creates “Send stock alert by SMS” with a link to the email ticket.</td></tr>
+</tbody>
+</table>
+<p>Both Linear writes give the need-level count, list Email and SMS, and point to message indices 0 and 1 in report 1. Each describes its own behavior. Use <code>report</code> with the same product to read the message text.</p>
+<p class="meta">Test fixture and prerequisites in <a href="../../tests/investigation.rs">the investigation tests</a> and <a href="../../README.md#investigate-demand-and-propose-linear-work">the setup guide</a>.</p>
+</section>
+<section id="entry">
+<h2>Enter the workflow</h2>
+<p>The CLI passes the saved report ID, product, integration adapters, and model to <code>Workflow::investigate</code>. With <code>--investigation-config</code>, the scheduler calls the same operation after a weekly report commits. Both paths return JSON with the product, report ID, and findings.</p>
+<figure data-source="src/main.rs" data-start="335" data-end="349"><figcaption>src/main.rs · lines 335–349 <span>exact source excerpt</span></figcaption><pre><code>335              let workflow = Workflow::open(state)?;
+336              let config = load_investigation_config(&amp;config, &amp;product)?;
+337              let runtime = tokio::runtime::Runtime::new()?;
+338              let mut investigator = investigation_model::Model {
+339                  runtime: &amp;runtime,
+340                  model: &amp;model,
+341              };
+342              let result = workflow.investigate(
+343                  &amp;product,
+344                  report,
+345                  &amp;config,
+346                  &amp;mut investigation_api::Sources::new()?,
+347                  &amp;mut investigator,
+348              )?;
+349              println!(&quot;{}&quot;, serde_json::to_string_pretty(&amp;result)?);</code></pre></figure>
+<p>Ship Signal looks up the report by product and ID. If grouping needs review, it returns <code>needs_identity_review: true</code> before searching external systems. Run <code>review-needs</code> and pass the fully reviewed report’s new ID to <code>investigate</code>.</p>
+</section>
+<section id="assess">
+<h2>Investigate demand</h2>
+<p>The saved flag <code>qualifies</code> already encodes the strict threshold. A need at exactly 25% stays outside investigation. Human-confirmed need IDs group and count feedback within the product. Ticket matching compares the requested behavior with the ticket’s scope.</p>
+<figure data-source="src/investigation.rs" data-start="389" data-end="401"><figcaption>src/investigation.rs · lines 389–401 <span>exact source excerpt</span></figcaption><pre><code>389      let analysis = &amp;report.products[0];
+390      let mut stored = state::StoredInvestigation::new(report, analysis.needs_identity_review);
+391      if analysis.needs_identity_review {
+392          return Ok(stored);
+393      }
+394      let demand = analysis
+395          .needs
+396          .iter()
+397          .filter(|need| need.qualifies)
+398          .map(|need| demand_evidence(report, need))
+399          .collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?;
+400      if demand.is_empty() {
+401          return Ok(stored);</code></pre></figure>
+<p>The workflow searches the configured Linear team and project pairs, then reads linked PR evidence and repo files at pinned commits. Labels give context, including when a matching issue is unlabeled. The model selects relevant files and proposes a finding for each variant. Rust checks the cited issues and code against the records it retrieved.</p>
+<h3 id="outcomes">Choose an outcome</h3>
+<p>Matching planned or ongoing work gets a comment. Distinct work can become a proposal once it has one evidenced repository, bounded behavior, and acceptance criteria. Confirmed live functionality, ambiguous matches, and multi-repository work appear in the local findings. A matching rejection is held for cooldown handling.</p>
+<figure data-source="src/investigation.rs" data-start="659" data-end="677"><figcaption>src/investigation.rs · lines 659–677 <span>exact source excerpt</span></figcaption><pre><code>659      let write = match decision.kind {
+660          AssessmentKind::ExistingFunctionality if cited_code.iter().any(|code| code.live) =&gt; {
+661              finding.kind = FindingKind::PossibleBugOrDiscoverability;
+662              None
+663          }
+664          AssessmentKind::MatchingWork if matching.len() == 1 &amp;&amp; matching[0].planned_or_ongoing() =&gt; {
+665              finding.kind = FindingKind::MatchingWork;
+666              Some(LinearWrite::Comment {
+667                  operation_id: uuid::Uuid::new_v4().to_string(),
+668                  ticket: Box::new(matching[0].clone()),
+669                  body: evidence_markdown(report, &amp;finding),
+670              })
+671          }
+672          AssessmentKind::DistinctWork if matching.is_empty() =&gt; {
+673              let Some(proposal) = decision.proposal.filter(bounded_proposal) else {
+674                  finding.reason = format!(&quot;The proposed scope needs review. {}&quot;, finding.reason);
+675                  return Ok((finding, None));
+676              };
+677              finding.kind = FindingKind::Proposal;</code></pre></figure>
+</section>
+<section id="write">
+<h2>Save and send</h2>
+<p>Before writing, Ship Signal checks the comment target or compares the current Linear issue catalog with the one it investigated. If the evidence changed, the outcome goes to review. The SQLite transaction saves the operation ID, product ownership, and uncertainty state before the request leaves Ship Signal.</p>
+<figure data-source="src/investigation/state.rs" data-start="210" data-end="234"><figcaption>src/investigation/state.rs · lines 210–234 <span>exact source excerpt</span></figcaption><pre><code>210              sources.validate_write(write)?;
+211              // Commit ownership and intent before sending anything to Linear.
+212              let tx = connection.unchecked_transaction()?;
+213              claim_issue(&amp;tx, &amp;product.product_id, write)?;
+214              self.entries[index].finding.write = Some(WriteStatus::Uncertain);
+215              save(&amp;tx, root_id, self)?;
+216              tx.commit()?;
+217
+218              let write = self.entries[index]
+219                  .write
+220                  .as_ref()
+221                  .context(&quot;saved write intent is missing&quot;)?;
+222              let status = match sources.write(write) {
+223                  Ok(reference)
+224                      if reference.id == write.operation_id() &amp;&amp; !reference.url.is_empty() =&gt;
+225                  {
+226                      WriteStatus::Completed { reference }
+227                  }
+228                  _ =&gt; {
+229                      unresolved = true;
+230                      WriteStatus::Uncertain
+231                  }
+232              };
+233              self.entries[index].finding.write = Some(status);
+234              save(connection, root_id, self)?;</code></pre></figure>
+<h3 id="recovery">Resume safely</h3>
+<p>When Linear confirms success, the result stores the issue or comment reference. If the process stops after sending the request and before saving the response, the next run reports the operation as uncertain and holds further writes for that product. The operation UUID gives the operator a record to inspect in Linear.</p>
+<p>An issue keeps its recorded product if a person moves it to a different Linear project. That guards against attaching a second product’s evidence to the same issue.</p>
+<p class="meta">See <a href="../06-database-design/database-design.html#tables">the SQLite data model</a> for the report, scope, and issue relationships.</p>
+</section>
+<section id="verification">
+<h2>Verification</h2>
+<p>The behavior shown above comes from real temporary SQLite state and controlled Linear, GitHub, and model responses. The local Rust suite passed all 45 default tests. Linear operations were checked against the published GraphQL schema and GitHub read endpoints against this repository. Live Linear mutations and real-model assessments remain unverified.</p>
+<p><a href="https://github.com/SuchintK/ship-signal/pull/8">Open PR #8</a></p>
+</section>
+</main>
+</div>
+</body>
+</html>
