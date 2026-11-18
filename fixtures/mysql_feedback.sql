@@ -71,7 +71,7 @@ FROM timestamp_feedback;
 
 SET SESSION sql_mode = 'ALLOW_INVALID_DATES';
 CREATE TABLE legacy_feedback (submitted_at datetime(6));
-INSERT INTO legacy_feedback VALUES ('0000-00-00'), ('2026-10-00'), ('2026-02-31');
+INSERT INTO legacy_feedback VALUES ('0000-00-00'), ('0000-01-01'), ('2026-10-00'), ('2026-02-31');
 CREATE VIEW legacy_dates AS
 SELECT 'shop' AS product_id, 'email' AS feedback_source_id,
  'legacy' AS source_message_id, CAST(NULL AS CHAR(100)) AS customer_id,

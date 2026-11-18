@@ -1,6 +1,6 @@
 use crate::{
     AnalysisInput, FeedbackSource,
-    feedback_row::{FEEDBACK_COLUMNS, FeedbackRow, validate_rows},
+    feedback_row::{FEEDBACK_COLUMNS, FeedbackRow, query_bounds, validate_rows},
     validate_product_id,
 };
 use anyhow::{Context, Result, ensure};
@@ -77,7 +77,7 @@ impl FeedbackSource for PostgresSource {
         end: DateTime<Utc>,
     ) -> Result<AnalysisInput> {
         validate_product_id(product_id)?;
-        ensure!(start < end, "interval start must precede end");
+        let (start, end) = query_bounds(start, end)?;
         let mut tx = self.client.build_transaction().read_only(true).start()?;
         let query = format!(
             "SELECT {FEEDBACK_COLUMNS} FROM {} WHERE product_id = $1 AND ((submitted_at >= $2 AND submitted_at < $3) OR submitted_at IS NULL)",

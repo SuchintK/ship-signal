@@ -30,6 +30,20 @@ fn validates_mysql_views_and_reads_explicit_utc_with_a_select_only_account() -> 
     }
 
     let mut reader = mysql::Conn::new(options.clone())?;
+    let lower_case_names: u8 = reader
+        .query_first("SELECT @@lower_case_table_names")?
+        .unwrap();
+    let uppercase_schema = options.get_db_name().unwrap().to_ascii_uppercase();
+    assert_eq!(
+        MysqlSource::connect(
+            options.clone(),
+            Some(&uppercase_schema),
+            "SHIP_SIGNAL_FEEDBACK",
+            true
+        )
+        .is_ok(),
+        lower_case_names != 0
+    );
     assert!(
         reader
             .query_drop("UPDATE customer_feedback SET message = 'changed' WHERE id = 1")
@@ -71,7 +85,7 @@ fn validates_mysql_views_and_reads_explicit_utc_with_a_select_only_account() -> 
     assert!(input.feedback.is_empty());
     assert_eq!(
         input.diagnostics,
-        [("invalid_rows".into(), 3), ("submitted_at".into(), 3)].into()
+        [("invalid_rows".into(), 4), ("submitted_at".into(), 4)].into()
     );
     Ok(())
 }
@@ -108,6 +122,10 @@ fn mysql_filters_exact_product_before_validating_rows_and_interval_boundaries() 
         input.diagnostics,
         [("invalid_rows".into(), 1), ("submitted_at".into(), 1)].into()
     );
+    let error = source
+        .read("shop", "0999-01-01T00:00:00Z".parse()?, end)
+        .unwrap_err();
+    assert!(error.to_string().contains("1000"));
     let other = source.read("other-shop", start, end)?;
     assert_eq!(other.feedback.len(), 1);
     assert_eq!(other.feedback[0].text, "FOREIGN_PRODUCT_MESSAGE");
@@ -127,6 +145,18 @@ fn mysql_and_postgres_save_equivalent_reports_with_controlled_classifications() 
 {
     let mysql = mysql_options()?;
     let postgres = std::env::var("SHIP_SIGNAL_TEST_POSTGRES")?;
+    let mut mysql_source = MysqlSource::connect(mysql.clone(), None, "ship_signal_feedback", true)?;
+    let mut pg_source = PostgresSource::connect(&postgres, "public", "ship_signal_feedback", true)?;
+    for source in [&mut mysql_source as &mut dyn FeedbackSource, &mut pg_source] {
+        let before = "2026-11-06T09:59:59.999999999Z".parse()?;
+        let at = "2026-11-06T10:00:00Z".parse()?;
+        let after = "2026-11-06T10:00:00.000000001Z".parse()?;
+        let next = "2026-11-06T10:00:00.000001Z".parse()?;
+        assert_eq!(source.read("demo-shop", before, after)?.feedback.len(), 1);
+        assert!(source.read("demo-shop", before, at)?.feedback.is_empty());
+        assert!(source.read("demo-shop", after, next)?.feedback.is_empty());
+    }
+
     let dir = tempfile::tempdir()?;
     let mysql_state = dir.path().join("mysql.sqlite");
     let pg_state = dir.path().join("postgres.sqlite");

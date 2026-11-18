@@ -1,9 +1,33 @@
 use crate::{AnalysisInput, Feedback};
-use anyhow::Result;
-use chrono::{DateTime, Utc};
+use anyhow::{Context, Result, ensure};
+use chrono::{DateTime, TimeDelta, Utc};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const FEEDBACK_COLUMNS: &str = "product_id, feedback_source_id, source_message_id, customer_id, submitted_at, feedback_text, source_reference";
+
+pub(crate) fn query_bounds(
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
+    ensure!(start < end, "interval start must precede end");
+    // Both databases store at most microseconds. Round each bound upward so rows
+    // on the storage grid are selected exactly as they were by the original bounds.
+    let ceil_to_microseconds = |bound: DateTime<Utc>| {
+        let nanos = bound.timestamp_subsec_nanos();
+        ensure!(
+            nanos < 1_000_000_000,
+            "feedback interval bounds cannot contain leap seconds"
+        );
+        let remainder = nanos % 1000;
+        if remainder == 0 {
+            return Ok(bound);
+        }
+        bound
+            .checked_add_signed(TimeDelta::nanoseconds(i64::from(1000 - remainder)))
+            .context("feedback interval bound is out of range")
+    };
+    Ok((ceil_to_microseconds(start)?, ceil_to_microseconds(end)?))
+}
 
 pub(crate) struct FeedbackRow {
     pub product_id: Option<String>,

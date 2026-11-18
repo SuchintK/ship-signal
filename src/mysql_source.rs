@@ -1,10 +1,10 @@
 use crate::{
     AnalysisInput, FeedbackSource,
-    feedback_row::{FEEDBACK_COLUMNS, FeedbackRow, validate_rows},
+    feedback_row::{FEEDBACK_COLUMNS, FeedbackRow, query_bounds, validate_rows},
     validate_product_id,
 };
 use anyhow::{Context, Result, anyhow, ensure};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDateTime, Utc};
 use mysql::{
     AccessMode, Conn, Opts, TxOpts, Value, from_row_opt, from_value_opt, prelude::Queryable,
 };
@@ -41,18 +41,22 @@ impl MysqlSource {
             .context("set MySQL feedback session to UTC")?;
         client.query_drop("SET NAMES utf8mb4")?;
 
-        let kind: Option<String> = client.exec_first(
-            "SELECT TABLE_TYPE FROM information_schema.TABLES
-             WHERE CAST(TABLE_SCHEMA AS BINARY) = CAST(? AS BINARY)
-               AND CAST(TABLE_NAME AS BINARY) = CAST(? AS BINARY)",
-            (&schema, view),
+        let canonical_view: Option<(String, String)> = client.exec_first(
+            "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TABLES
+             WHERE TABLE_TYPE = 'VIEW'
+               AND CASE WHEN @@lower_case_table_names = 0
+                   THEN CAST(TABLE_SCHEMA AS BINARY) = CAST(? AS BINARY)
+                   ELSE CAST(LOWER(TABLE_SCHEMA) AS BINARY) = CAST(LOWER(?) AS BINARY) END
+               AND CASE WHEN @@lower_case_table_names = 0
+                   THEN CAST(TABLE_NAME AS BINARY) = CAST(? AS BINARY)
+                   ELSE CAST(LOWER(TABLE_NAME) AS BINARY) = CAST(LOWER(?) AS BINARY) END",
+            (&schema, &schema, view, view),
         )?;
-        ensure!(
-            kind.as_deref() == Some("VIEW"),
-            "{schema}.{view} must be an existing MySQL view visible to the reader"
-        );
+        let (schema, view) = canonical_view.with_context(|| {
+            format!("{schema}.{view} must be an existing MySQL view visible to the reader")
+        })?;
 
-        let qualified = format!("{}.{}", quote_identifier(&schema), quote_identifier(view));
+        let qualified = format!("{}.{}", quote_identifier(&schema), quote_identifier(&view));
 
         let columns: Vec<(String, String)> = client.exec(
             "SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS
@@ -60,7 +64,7 @@ impl MysqlSource {
                AND CAST(TABLE_NAME AS BINARY) = CAST(? AS BINARY)",
             (&schema, view),
         )?;
-        for name in FEEDBACK_COLUMNS.split(", ") {
+        for name in FEEDBACK_COLUMNS.split(',').map(str::trim) {
             let (_, data_type) = columns
                 .iter()
                 .find(|(column, _)| column.eq_ignore_ascii_case(name))
@@ -101,7 +105,11 @@ impl FeedbackSource for MysqlSource {
         end: DateTime<Utc>,
     ) -> Result<AnalysisInput> {
         validate_product_id(product_id)?;
-        ensure!(start < end, "interval start must precede end");
+        let (start, end) = query_bounds(start, end)?;
+        ensure!(
+            (1000..=9999).contains(&start.year()) && (1000..=9999).contains(&end.year()),
+            "MySQL feedback interval bounds must fall within UTC years 1000 through 9999"
+        );
         let mut tx = self
             .client
             .start_transaction(TxOpts::default().set_access_mode(Some(AccessMode::ReadOnly)))?;
@@ -134,6 +142,7 @@ impl FeedbackSource for MysqlSource {
             let submitted_at = from_value_opt::<Option<NaiveDateTime>>(submitted_at)
                 .ok()
                 .flatten()
+                .filter(|time| time.year() != 0)
                 .map(|time| time.and_utc());
             Ok(FeedbackRow {
                 product_id,
