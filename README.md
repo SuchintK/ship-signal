@@ -26,7 +26,7 @@ The analysis workflow supports a chosen product and interval against a PostgreSQ
 [GitHub Actions CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`. Two independent jobs run on standard Ubuntu runners:
 
 - **Rust checks:** walkthrough tooling tests and document validation, then formatting, Clippy with warnings treated as errors, and application tests. Compilation is checked by Clippy and the tests.
-- **Feedback database integration:** temporary PostgreSQL 17 and MySQL 8.4 services load synthetic fixtures and run both connector suites, including a saved-report comparison across engines.
+- **PostgreSQL integration:** this required check runs both connector suites against temporary PostgreSQL 17 and MySQL 8.4 services, including a saved-report comparison across engines.
 
 Each job has a 20-minute timeout and a separate Rust build cache. A newer run for the same pull request or branch cancels its superseded run. Model responses are controlled by the tests; no AI provider credentials are needed. Formatting checks report differences without modifying files.
 

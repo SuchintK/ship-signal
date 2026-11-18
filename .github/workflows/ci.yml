@@ -47,7 +47,7 @@ jobs:
         run: cargo test --locked --all-targets
 
   postgres:
-    name: Feedback database integration
+    name: PostgreSQL integration
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
