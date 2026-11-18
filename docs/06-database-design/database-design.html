@@ -17,7 +17,7 @@
 <div class="eyebrow">Ship Signal / Engineering guide / 06</div>
 <h1>Database design</h1>
 <p class="lede">Where feedback comes from, how reports are saved, and how a model’s need text becomes a human-confirmed identity.</p>
-<p class="meta">Implemented design · Source commit <code>f7b8970576a92e6edbfa93333192ec4ef4a61bb8</code><br>This guide describes the analysis and need review code at that commit. Wider workflow storage remains to be implemented.</p>
+<p class="meta">Implemented design · Source commit <code>89f7d78175a8515cb5fd70f83df89a83ca2e5420</code><br>This guide describes the analysis and need review code at that commit. Wider workflow storage remains to be implemented.</p>
 <nav aria-label="Contents">
 <a href="#overview">01 · Two stores</a><a href="#relationships">02 · Relationships</a><a href="#source">03 · Feedback source</a><a href="#tables">04 · SQLite tables</a><a href="#json">05 · Report JSON</a><a href="#identity">06 · Needs &amp; IDs</a><a href="#flow">07 · Write flow</a><a href="#boundaries">08 · Boundaries</a>
 </nav>
@@ -100,7 +100,7 @@ SELECT 'demo-shop' AS product_id,
        message AS feedback_text,
        CAST(NULL AS CHAR(200)) AS source_reference
 FROM customer_feedback;</code></pre>
-<p>Every command requires <code>--product</code>. The database filters by the exact product ID and applies <code>submitted_at &gt;= start AND submitted_at &lt; end</code>. The read also includes NULL timestamps and malformed MySQL dates for that product as invalid rows. MySQL compares the product ID as UTF-8 bytes so the database collation cannot fold case, accents, or trailing spaces. Other products and rows without a product ID are outside the read and its diagnostics. The report saves valid rows and exclusion counts/reasons; excluded raw messages are not copied into the report.</p>
+<p>Every command requires <code>--product</code>. The database filters by the exact product ID and applies <code>submitted_at &gt;= start AND submitted_at &lt; end</code>. The read also includes NULL timestamps and malformed MySQL dates for that product as invalid rows. MySQL compares the product ID as UTF-8 bytes so the database collation cannot fold case, accents, or trailing spaces. Other products and rows without a product ID are outside the read and its diagnostics. Both databases compare at microsecond precision. Ship Signal rounds query cutoffs up to the next microsecond when needed to preserve interval membership and saves the requested cutoffs unchanged. The report saves valid rows and exclusion counts/reasons; excluded raw messages are not copied into the report.</p>
 <div class="callout warm"><p><strong>A timestamp type cannot verify the original timezone.</strong> <code>--timestamps-mapped-to-utc</code> confirms for this invocation that the customer team has mapped source times correctly in the view. This confirmation is checked, not saved in application state. For a local source time in another timezone, the view must use that actual timezone. MySQL sessions use UTC for <code>TIMESTAMP</code> values. The view must expose MySQL <code>DATETIME</code> values in UTC.</p></div>
 <p class="muted">Source and fixtures for <a href="../../src/postgres_source.rs">PostgreSQL</a> (<a href="../../fixtures/feedback.sql">SQL</a>) and <a href="../../src/mysql_source.rs">MySQL</a> (<a href="../../fixtures/mysql_feedback.sql">SQL</a>). See <a href="../../README.md#feedback-analysis">connection and CLI setup</a>.</p>
 </section>
