@@ -133,7 +133,11 @@ fn mysql_filters_exact_product_before_validating_rows_and_interval_boundaries() 
     for variant in ["SHOP", "shop ", "shóp"] {
         let separate = source.read(variant, start, end)?;
         assert!(separate.feedback.is_empty());
-        assert_eq!(separate.diagnostics.get("feedback_text"), Some(&1));
+        assert_eq!(
+            separate.diagnostics.get("feedback_text"),
+            Some(&1),
+            "selected product {variant:?}"
+        );
     }
     assert!(source.read("   ", start, end).is_err());
     Ok(())

@@ -1,4 +1,6 @@
 -- Synthetic data and credentials for a disposable MySQL server only.
+SET NAMES utf8mb4;
+
 CREATE DATABASE IF NOT EXISTS ship_signal_feedback CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE ship_signal_feedback;
 
