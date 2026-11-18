@@ -16,8 +16,8 @@
 <header>
 <div class="eyebrow">Ship Signal / Engineering guide / 06</div>
 <h1>Database design</h1>
-<p class="lede">Where feedback comes from, how weekly cycles and reports are saved, and how a model’s need text becomes a human-confirmed identity.</p>
-<p class="meta">Implemented design · Source revision is the checkout containing this guide. See <a href="../../src/lib.rs">report storage</a> and <a href="../../src/weekly_schedule.rs">weekly scheduling</a>.</p>
+<p class="lede">Where feedback comes from, how weekly cycles and reports are saved, and how confirmed needs become evidence for Linear proposals.</p>
+<p class="meta">Implemented design · Source revision is the checkout containing this guide. See <a href="../../src/lib.rs">report storage</a>, <a href="../../src/weekly_schedule.rs">weekly scheduling</a>, and <a href="../../src/investigation/state.rs">investigation storage</a>.</p>
 <nav aria-label="Contents">
 <a href="#overview">01 · Two stores</a><a href="#relationships">02 · Relationships</a><a href="#source">03 · Feedback source</a><a href="#tables">04 · SQLite tables</a><a href="#json">05 · Report JSON</a><a href="#identity">06 · Needs &amp; IDs</a><a href="#flow">07 · Write flow</a><a href="#boundaries">08 · Boundaries</a>
 </nav>
@@ -27,7 +27,7 @@
 <span class="number">01 / STORAGE BOUNDARIES</span><h2>Two databases, two responsibilities</h2>
 <div class="grid">
 <article class="card"><span class="tag blue">Customer-owned PostgreSQL or MySQL</span><h3>The feedback source</h3><p>The customer application owns the original messages. A PostgreSQL or MySQL view exposes the seven columns Ship Signal understands.</p><p>Ship Signal reads this view in a read-only transaction. It does not save review decisions into the customer’s database.</p></article>
-<article class="card"><span class="tag">Ship Signal SQLite file</span><h3>The application state</h3><p>A local file selected with <code>--state</code> contains weekly cycles, saved reports, confirmed need-to-identity mappings, and deferred review items.</p><p>Use persistent local storage on one host. The SQLite file is separate from the feedback database.</p></article>
+<article class="card"><span class="tag">Ship Signal SQLite file</span><h3>The application state</h3><p>A local file selected with <code>--state</code> contains weekly cycles, saved reports, confirmed need-to-identity mappings, deferred review items, investigation results, and Linear scope ownership.</p><p>Use persistent local storage on one host. The SQLite file is separate from the feedback database.</p></article>
 </div>
 <div class="flow" aria-label="Feedback storage flow">
 <div class="card"><h3>Feedback view</h3><p>Read one selected product for <code>[start, end)</code>.</p></div><span class="arrow" aria-hidden="true">→</span>
@@ -38,13 +38,13 @@
 </section>
 
 <section id="relationships">
-<span class="number">02 / RELATIONSHIP MAP</span><h2>Four SQLite tables</h2>
+<span class="number">02 / RELATIONSHIP MAP</span><h2>Six SQLite tables</h2>
 <div class="diagram">
-<svg viewBox="0 0 960 575" role="img" aria-labelledby="er-title er-description">
+<svg viewBox="0 0 960 813" role="img" aria-labelledby="er-title er-description">
 <title id="er-title">SQLite tables and application-level relationships</title>
-<desc id="er-description">Each completed weekly cycle has a report ID foreign key. Deferrals and reviewed_from also refer to reports through application logic. Alias mappings match product ID and need text. A solid arrow marks the SQLite foreign key and dashed arrows mark application relationships.</desc>
+<desc id="er-description">Each completed weekly cycle and each investigation run has a report ID foreign key. Investigation scope ownership is keyed by the Linear team and project pair. Deferrals and reviewed_from also refer to reports through application logic. Alias mappings match product ID and need text. A solid arrow marks the SQLite foreign key and dashed arrows mark application relationships.</desc>
 <defs><marker id="arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="#8ce0c2"/></marker></defs>
-<g fill="#101820" stroke="#557383" stroke-width="1.5"><rect x="25" y="40" width="410" height="220" rx="12"/><rect x="525" y="40" width="410" height="180" rx="12"/><rect x="25" y="320" width="410" height="235" rx="12"/><rect x="525" y="350" width="410" height="150" rx="12"/></g>
+<g fill="#101820" stroke="#557383" stroke-width="1.5"><rect x="25" y="40" width="410" height="220" rx="12"/><rect x="525" y="40" width="410" height="180" rx="12"/><rect x="25" y="320" width="410" height="235" rx="12"/><rect x="525" y="350" width="410" height="150" rx="12"/><rect x="25" y="615" width="410" height="171" rx="12"/><rect x="525" y="615" width="410" height="171" rx="12"/></g>
 <g fill="#eef5f6" font-family="ui-monospace,monospace" font-size="17">
 <text x="45" y="73" fill="#8ce0c2" font-weight="700">analysis_reports</text>
 <text x="45" y="108">PK  id INTEGER</text><text x="45" y="138">    product_id TEXT</text><text x="45" y="168">    report TEXT (JSON)</text>
@@ -55,14 +55,18 @@
 <text x="45" y="384">PK  product_id TEXT</text><text x="45" y="410">PK  friday TEXT</text><text x="45" y="436">    timezone TEXT</text><text x="45" y="462">    feedback_start, analysis_cutoff,</text><text x="45" y="488">    approval_cutoff TEXT</text><text x="45" y="514">    status TEXT</text><text x="45" y="540">FK  report_id INTEGER (optional)</text>
 <text x="545" y="384" fill="#8ce0c2" font-weight="700">need_identity_aliases</text>
 <text x="545" y="418">PK  product_id TEXT</text><text x="545" y="448">PK  need TEXT</text><text x="545" y="478">    identity TEXT</text>
+<text x="45" y="648" fill="#8ce0c2" font-weight="700">investigation_runs</text>
+<text x="45" y="682">PK  product_id TEXT</text><text x="45" y="712">PK, FK  original_report_id INTEGER</text><text x="45" y="742">    result TEXT (JSON)</text>
+<text x="545" y="648" fill="#8ce0c2" font-weight="700">investigation_scopes</text>
+<text x="545" y="682">PK  team_id TEXT</text><text x="545" y="712">PK  project_id TEXT</text><text x="545" y="742">    product_id TEXT</text>
 </g>
 <g fill="none" stroke="#8ce0c2" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrowhead)">
 <path d="M525 108 H435"/><path d="M435 229 H480 V418 H525"/>
 </g>
-<path d="M225 320 V260" fill="none" stroke="#8ce0c2" stroke-width="2" marker-end="url(#arrowhead)"/>
+<path d="M225 320 V260 M435 712 H459 V183 H435" fill="none" stroke="#8ce0c2" stroke-width="2" marker-end="url(#arrowhead)"/>
 <g fill="#b3c6cf" font-family="system-ui,sans-serif" font-size="13"><text x="444" y="93">report ID</text><text x="240" y="298">original report ID</text><text x="495" y="308">Lookup using product_id + request.need</text></g>
 </svg>
-<p class="caption">PK means primary key. The solid arrow shows the report ID foreign key enforced by SQLite. Dashed arrows show relationships maintained in Rust.</p>
+<p class="caption">PK means primary key. Solid arrows show report ID foreign keys enforced by SQLite. Dashed arrows show relationships maintained in Rust.</p>
 </div>
 <div class="callout"><p><strong>There is no separate <code>needs</code>, <code>customers</code>, or <code>classifications</code> table.</strong> Reports embed these values in JSON. There is also no separate identity table: a need identity exists as a text value in one or more alias rows for a product.</p></div>
 </section>
@@ -142,6 +146,20 @@ CREATE TABLE IF NOT EXISTS weekly_cycles (
     report_id INTEGER UNIQUE REFERENCES analysis_reports(id),
     CHECK ((status = 'completed') = (report_id IS NOT NULL)),
     PRIMARY KEY (product_id, friday)
+);
+
+CREATE TABLE IF NOT EXISTS investigation_runs (
+    product_id TEXT NOT NULL,
+    original_report_id INTEGER NOT NULL REFERENCES analysis_reports(id),
+    result TEXT NOT NULL,
+    PRIMARY KEY (product_id, original_report_id)
+);
+
+CREATE TABLE IF NOT EXISTS investigation_scopes (
+    team_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    product_id TEXT NOT NULL,
+    PRIMARY KEY (team_id, project_id)
 );</code></pre>
 <h3>A. <code>analysis_reports</code> — one saved result per row</h3>
 <div class="table-wrap"><table><thead><tr><th>Column</th><th>Meaning</th></tr></thead><tbody>
@@ -172,6 +190,11 @@ CREATE TABLE IF NOT EXISTS weekly_cycles (
 <tr><td><code>report_id</code></td><td>Optional link to the same product’s original saved report. Assignment and report insertion commit together.</td></tr>
 </tbody></table></div>
 <p>For example, a completed <code>demo-shop</code> cycle on <code>2026-11-13</code> in <code>America/New_York</code> has a UTC feedback interval of <code>[2026-11-06T14:00:00Z, 2026-11-13T14:00:00Z)</code> and approval cutoff <code>2026-11-14T14:00:00Z</code>. The report ID in <code>weekly-cycles</code> opens the original snapshot with <code>report</code>.</p>
+<h3>E. <code>investigation_runs</code> — one workflow result per original report</h3>
+<p>The key is <code>(product_id, original_report_id)</code>. The JSON stores the report ID actually used, the identity-review flag, and findings with evidence pointers. A reviewed report can replace a provisional result. A completed investigation stays bound to the report used to produce it.</p>
+<p>Each intended Linear comment or proposal is stored alongside its finding with a UUID. Its state is saved as <code>pending</code>, then <code>uncertain</code> immediately before sending the request, then <code>completed</code> with a Linear reference when the response confirms success. An uncertain result holds further writes for that product. These updates commit before and after the network call in separate SQLite operations.</p>
+<h3>F. <code>investigation_scopes</code> — Linear ownership within this installation</h3>
+<p>Each team and project pair is claimed by one product in a short transaction. An empty project ID represents the team’s unprojected issues. Before a ready report searches Linear, the workflow verifies that the requested product owns all its scopes. This prevents two product configurations using the same SQLite file from sharing one Linear scope.</p>
 <div class="callout warm"><p>SQLite enforces primary keys, required columns, valid cycle status, and a unique report reference exactly when the cycle is completed. Rust maintains product ownership and the other report relationships, validates report content, and applies guarded, case-insensitive need mappings.</p></div>
 </section>
 
@@ -254,7 +277,7 @@ Need { need: "Export orders", variant: Some("CSV") }
 </section>
 
 <section id="flow">
-<span class="number">07 / READS &amp; WRITES</span><h2>Follow one analysis through review</h2>
+<span class="number">07 / READS &amp; WRITES</span><h2>Follow one analysis through review and investigation</h2>
 <ol class="steps">
 <li><strong>Read the customer view for the supplied product.</strong> Filter in the feedback database before capture. Both connectors use the same row validation and order valid messages by submission time, source ID, and message ID before assigning classifier indices. This step makes no source-database writes.</li>
 <li><strong>Classify the valid messages.</strong> The model returns need texts and optional variants. Rust validates the classification shape and message indices.</li>
@@ -262,6 +285,8 @@ Need { need: "Export orders", variant: Some("CSV") }
 <li><strong>Insert report 1.</strong> Serialize the complete snapshot, then execute one <code>INSERT INTO analysis_reports(product_id, report) VALUES (?1, ?2) RETURNING id</code>. For a scheduled analysis, the same transaction marks the cycle completed and links this report. Source reads and classification finish before that transaction.</li>
 <li><strong>Review unresolved needs.</strong> Read report 1 and same-product aliases to build the queue. A confirmed decision inserts a mapping immediately; a deferral inserts a report-scoped deferral row. These decisions survive quitting or interruption.</li>
 <li><strong>Insert reviewed report 2.</strong> On review completion, recalculate from report 1’s saved inputs and classifications using current mappings. Save a new row with <code>reviewed_from: 1</code>. This step uses the inputs and classifications already in SQLite. Deferred needs can leave the new report provisional.</li>
+<li><strong>Investigate a ready report.</strong> Compare qualifying need variants with existing work, PRs, and code. Save findings and any intended Linear writes. For example, report 2 can support an email ticket and a new SMS proposal while pointing both outcomes to the same underlying need’s supporting messages.</li>
+<li><strong>Send each eligible write.</strong> Commit the operation UUID and uncertainty state before calling Linear. A response with the same UUID completes the write. A restart can continue a pending write and surfaces an uncertain one for reconciliation.</li>
 </ol>
 <div class="grid">
 <article class="card"><h3>What changes?</h3><p>The alias table gains the confirmed mapping. In report 2, the example need has <code>identity: "export-orders"</code> and the product’s review flag becomes false if no unresolved needs remain.</p></article>
@@ -274,7 +299,7 @@ Need { need: "Export orders", variant: Some("CSV") }
 <span class="number">08 / IMPLEMENTATION BOUNDARIES</span><h2>What this design does and what remains open</h2>
 <div class="table-wrap"><table><thead><tr><th>Area</th><th>Current implementation</th></tr></thead><tbody>
 <tr><td>Schema setup</td><td><code>CREATE TABLE IF NOT EXISTS</code> at open time. No versioned migration framework or schema-version table is configured.</td></tr>
-<tr><td>State file compatibility</td><td>The scheduler adds <code>weekly_cycles</code> to an existing state file with product-owned reports. Reports keep their current JSON format.</td></tr>
+<tr><td>State file compatibility</td><td>Opening an existing state file adds any missing schedule and investigation tables. Saved analysis reports keep their existing JSON format.</td></tr>
 <tr><td>SQLite settings</td><td>The workflow enables foreign-key enforcement and uses the connection defaults for journaling and busy handling.</td></tr>
 <tr><td>Scheduler ownership</td><td>A lock beside the SQLite file excludes another foreground scheduler until the first one exits. Schedule and report readers can open the SQLite database during analysis.</td></tr>
 <tr><td>Historical source corrections</td><td>Reviewing saved classifications is implemented. The wider historical rerun and comparison workflow described in ADR-0005 is separate; <code>reviewed_from</code> records identity-review derivation here.</td></tr>

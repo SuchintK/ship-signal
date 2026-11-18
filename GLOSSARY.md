@@ -50,7 +50,7 @@ _Avoid_: Treating "name" and "label" as separate domain concepts for the same ne
 A particular way a customer wants a need addressed, such as email rather than SMS notifications.
 
 **Feature identity**:
-The identity used to recognize a feature across messages, tickets, and weeks. Whether it represents a broad need or a particular behavior is one of the distinctions under discussion.
+A product-scoped need ID recognizes the same customer goal across messages and weeks. Ticket matching uses the concrete requested behavior and implementation scope. See [ADR-0006](docs/03-adr/0006-scope-demand-investigation-to-product-and-behavior.md).
 
 **Grouping**:
 The organization of related requests around a shared need while retaining differences in requested behavior.

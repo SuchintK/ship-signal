@@ -9,6 +9,7 @@ use std::{
 };
 
 mod feedback_row;
+pub mod investigation;
 pub mod mysql_source;
 mod need_review;
 pub mod postgres_source;
@@ -172,6 +173,7 @@ impl Workflow {
         let connection = Connection::open(path)?;
         connection.execute_batch("CREATE TABLE IF NOT EXISTS analysis_reports (id INTEGER PRIMARY KEY, product_id TEXT NOT NULL, report TEXT NOT NULL); CREATE TABLE IF NOT EXISTS need_identity_aliases (product_id TEXT NOT NULL, need TEXT NOT NULL, identity TEXT NOT NULL, PRIMARY KEY (product_id, need)); CREATE TABLE IF NOT EXISTS need_review_deferrals (report_id INTEGER NOT NULL, product_id TEXT NOT NULL, need TEXT NOT NULL, PRIMARY KEY (report_id, product_id, need));")?;
         weekly_schedule::initialize(&connection)?;
+        investigation::initialize(&connection)?;
         Ok(Self { connection })
     }
     /// Assign a product-scoped identity to a need after human review.

@@ -4,7 +4,7 @@ This document preserves the ten findings from the technical review and the decis
 
 The repository contains design documentation and ADRs; implementation has not started. The [product design](../01-grill-session/README.md) defines the agreed behavior. [Accepted ADRs](../03-adr/README.md) preserve architectural decisions and their rationale. Recommendations below are proposals unless explicitly marked as accepted.
 
-Points 1 and 2 have been discussed and settled for MVP. Point 3 is partially settled: Rust, Rig, SQLite, and single-host deployment are accepted; detailed concurrency and recovery mechanisms remain open. Point 4's scheduling policy is settled; numerical defaults and implementation details remain open. Point 5's MVP feedback and correction policy is settled and recorded in accepted ADR-0005; additional provenance tracking was declined, and SQL, validation, capture/recovery, and CLI details remain specification work. Points 6–10 remain open. Deferred features must not be treated as MVP requirements. No specific future implementation of those features has been approved.
+Points 1 and 2 have been discussed and settled for MVP. Point 3 is partially settled: Rust, Rig, SQLite, and single-host deployment are accepted; detailed concurrency and recovery mechanisms remain open. Point 4's scheduling policy is settled; numerical defaults and implementation details remain open. Point 5's MVP feedback and correction policy is settled and recorded in accepted ADR-0005; additional provenance tracking was declined, and SQL, validation, capture/recovery, and CLI details remain specification work. Points 6 and 7 record the settled investigation policy and the remaining cooldown work. Points 8–10 remain open. Deferred features must not be treated as MVP requirements. No specific future implementation of those features has been approved.
 
 ## How to discuss a point
 
@@ -27,8 +27,8 @@ The existing “Questions to resolve,” “Alternatives,” and “Review recom
 | [3](#3-durable-state-concurrency-and-external-write-recovery) | Durable state, concurrency, and external-write recovery | Rust/Rig and SQLite single-host deployment accepted; recovery details open | Storage/deployment: accepted [ADR-0003](../03-adr/0003-use-sqlite-for-single-host-mvp-state.md) |
 | [4](#4-weekend-scheduling-and-recovery) | Weekend scheduling and recovery | Scheduling policy settled; defaults and implementation details open | Accepted [ADR-0004](../03-adr/0004-distinguish-scheduled-recovery-retries-and-manual-execution.md) |
 | [5](#5-feedback-contract-reproducibility-and-corrections) | Feedback contract, reproducibility, and corrections | MVP policy settled; extra provenance declined; implementation details open | Accepted [ADR-0005](../03-adr/0005-preserve-weekly-feedback-evidence-and-require-explicit-historical-corrections.md) |
-| [6](#6-feature-identity-grouping-and-cooldown-matching) | Feature identity, grouping, and cooldown matching | Open | ADR worth considering |
-| [7](#7-ticket-search-boundaries-and-repository-routing) | Ticket search boundaries and repository routing | Open | ADR worth considering |
+| [6](#6-feature-identity-grouping-and-cooldown-matching) | Feature identity, grouping, and cooldown matching | Investigation settled; cooldown similarity remains open | Accepted [ADR-0006](../03-adr/0006-scope-demand-investigation-to-product-and-behavior.md) |
+| [7](#7-ticket-search-boundaries-and-repository-routing) | Ticket search boundaries and repository routing | Settled for MVP | Accepted [ADR-0006](../03-adr/0006-scope-demand-investigation-to-product-and-behavior.md) |
 | [8](#8-repository-support-and-successful-pr-delivery) | Repository support and successful PR delivery | Open | ADR worth considering |
 | [9](#9-retention-and-copied-artifacts) | Retention and copied artifacts | Open | ADR worth considering |
 | [10](#10-model-qualification-and-pilot-evidence) | Model qualification and pilot evidence | Open | No new ADR needed for model names or evaluation details alone |
@@ -166,35 +166,19 @@ For implementation testing, the customer provides a development/test application
 
 ## 6. Feature identity, grouping, and cooldown matching
 
-**Status: open.** See [grouping](../01-grill-session/README.md) and [cooldown rules](../01-grill-session/README.md).
+**Status: settled for investigation.** See [ADR-0006](../03-adr/0006-scope-demand-investigation-to-product-and-behavior.md).
 
-**Why it matters:** “feature” currently covers an underlying need, a requested behavior, a duplicate-work match, a rejection target, and an implementation scope. Those boundaries may differ.
+Use product-scoped need IDs to group demand and apply the strict 25% threshold. Compare the variant’s concrete behavior with existing ticket scope. For example, two email requests and two SMS requests among ten feature-requesting customers qualify the notification need at 40%. An email-specific proposal records both variants and its own scope.
 
-For example, two of ten customers requesting email and two requesting SMS yield 40% demand for the notification need, but 20% for each preference. An email-only ticket should reveal that distinction. A rejection of SMS should not automatically imply a rejection of all notification work.
-
-**Questions to resolve:** stable identity across weeks; need versus behavior variants; uncertain matches; classification changes; and which similar requests a rejection suppresses.
-
-**Alternatives:** exact-behavior identity, broad need-level identity, or a hierarchy of needs and variants.
-
-**Review recommendation, not yet accepted:** distinguish underlying need, requested variant, and implementation scope. Preserve need-level counts and variant evidence, without introducing a new threshold. Test concrete grouping/rejection examples before choosing similarity rules. Retain the settled 90-day cooldown, renewed weekly qualification, and new-ticket/fresh-approval requirements.
-
-**ADR assessment: worth considering.** Persisted feature identity can become costly to change. Counterpoint: first validate the domain distinctions; similarity weights or prompt wording alone do not justify an ADR.
+SUC-22 still owns which similar behaviors a rejection suppresses and how the 90-day cooldown is enforced. SUC-21 hands off matches to rejected behavior without changing or recreating the rejected ticket. A shared need ID does not establish the match.
 
 ## 7. Ticket search boundaries and repository routing
 
-**Status: open.** See [product design sections 2 and 6](../01-grill-session/README.md).
+**Status: settled for MVP.** See [ADR-0006](../03-adr/0006-scope-demand-investigation-to-product-and-behavior.md).
 
-**Why it matters:** strict label filters can miss duplicate work; broad searches can mix products. Code on a branch or a completed ticket does not establish that customers can use the behavior. Repository mappings may be ambiguous for work spanning multiple repositories.
+Search all configured team and project pairs for the selected product, including archived context. Labels inform relevance. Require code evidence at a pinned customer-designated live ref to flag existing behavior. Require one evidenced repository for proposals and surface ambiguous ownership and multi-repository work for human review.
 
-**Questions to resolve:** hard search boundaries; labels as filters versus context; handling archived/rejected work; repository ownership; multi-repository tickets; and evidence required for “already exists.”
-
-**Alternatives:** hard label filters, contextual ranking, or a configurable combination; single-repository tickets versus coordinated multi-repository implementation.
-
-**Review recommendation, not yet accepted:** use configured product/team/project boundaries as hard constraints and labels as context by default. Record repository/branch and relevant deployment evidence. Require clear repository ownership before implementation, and consider a single-repository-ticket limit for the pilot. Preserve rejection precedence and send uncertain matches to human review.
-
-**Validation:** use representative existing tickets and repository mappings to check missed duplicates, unrelated matches, and ambiguous ownership.
-
-**ADR assessment: worth considering** for durable routing and cross-repository boundaries. Counterpoint: label weights and ordinary search settings can remain specification/configuration details.
+SUC-24 and SUC-25 use the proposal’s single repository and keep approval separate. SUC-31 handles reconciliation of uncertain writes using the saved product and operation ID.
 
 ## 8. Repository support and successful PR delivery
 

@@ -1966,6 +1966,7 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",
@@ -2479,6 +2480,8 @@ dependencies = [
  "native-tls",
  "postgres",
  "postgres-native-tls",
+ "regex",
+ "reqwest",
  "rig-agent",
  "rig-core",
  "rusqlite",
@@ -2487,6 +2490,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
