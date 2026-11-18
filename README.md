@@ -6,7 +6,7 @@ Ship Signal turns recurring customer feature requests into evidence-backed Linea
 
 ## Project status
 
-The first analysis workflow supports a chosen product and interval against a PostgreSQL feedback view. Scheduling, MySQL, ticket investigation, approval, and implementation remain future work.
+The analysis workflow supports a chosen product and interval against a PostgreSQL or MySQL feedback view. Scheduling, ticket investigation, approval, and implementation remain future work.
 
 ## Planned capabilities
 
@@ -26,7 +26,7 @@ The first analysis workflow supports a chosen product and interval against a Pos
 [GitHub Actions CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`. Two independent jobs run on standard Ubuntu runners:
 
 - **Rust checks:** walkthrough tooling tests and document validation, then formatting, Clippy with warnings treated as errors, and application tests. Compilation is checked by Clippy and the tests.
-- **PostgreSQL integration:** a temporary PostgreSQL 17 service loads both synthetic fixtures, then runs the connector tests that are ignored by the application-test command.
+- **PostgreSQL integration:** this required check runs both connector suites against temporary PostgreSQL 17 and MySQL 8.4 services, including a saved-report comparison across engines.
 
 Each job has a 20-minute timeout and a separate Rust build cache. A newer run for the same pull request or branch cancels its superseded run. Model responses are controlled by the tests; no AI provider credentials are needed. Formatting checks report differences without modifying files.
 
@@ -41,25 +41,42 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
 ```
 
-For the PostgreSQL job, load both fixtures into a disposable database as described below, set `SHIP_SIGNAL_TEST_POSTGRES` to its reader URL, and run `cargo test --locked --test postgres -- --ignored`. `--locked` keeps compilation on the versions recorded in `Cargo.lock`.
+For the integration job, load the fixtures into disposable databases as described below. Set `SHIP_SIGNAL_TEST_POSTGRES` and `SHIP_SIGNAL_TEST_MYSQL` to their reader URLs, then run:
 
-## PostgreSQL feedback analysis
+```sh
+cargo test --locked --test postgres -- --ignored
+cargo test --locked --test mysql -- --ignored
+```
 
-Install Rust and PostgreSQL, then build with `cargo build`. This initial CLI supports an explicit interval; it does not schedule weekly runs. It stores reports in a separate local SQLite file. Back up that file using SQLite's online backup facilities or while Ship Signal is stopped. Restrict access to the file: it contains copied customer feedback and classifications. Retention and deletion policy remain open. Each saved report belongs to one product, recorded in its SQLite row alongside the report ID. This development schema expects a fresh SQLite file; no migration from earlier schemas is provided.
+The MySQL suite uses both databases for the report comparison. `--locked` keeps compilation on the versions recorded in `Cargo.lock`.
 
-Expose a PostgreSQL **view** with these exact columns and types:
+## Feedback analysis
 
-| Column | PostgreSQL type | Requirement |
-| --- | --- | --- |
-| `product_id` | `text` | Nonempty stable product ID |
-| `feedback_source_id` | `text` | Nonempty stable channel/source ID |
-| `source_message_id` | `text` | Nonempty stable ID within product and source |
-| `customer_id` | `text` | Nonempty stable application customer ID, or NULL |
-| `submitted_at` | `timestamp with time zone` | UTC-normalized instant |
-| `feedback_text` | `text` | Nonempty message |
-| `source_reference` | `text` | Optional locator, or NULL |
+Install Rust and build with `cargo build`. Choose a PostgreSQL or MySQL feedback database. This initial CLI supports an explicit interval; it does not schedule weekly runs. It stores reports in a separate local SQLite file. Back up that file using SQLite's online backup facilities or while Ship Signal is stopped. Restrict access to the file: it contains copied customer feedback and classifications. Retention and deletion policy remain open. Each saved report belongs to one product, recorded in its SQLite row alongside the report ID. This development schema expects a fresh SQLite file; no migration from earlier schemas is provided.
 
-Cast existing IDs to text in the view. Map timestamps explicitly using the source's actual timezone, for example `submitted_local AT TIME ZONE 'America/New_York'` for a local timestamp. Never apply a timezone by guesswork. The setup flag confirms that you have made this mapping; the type check alone cannot prove it. Grant the connection account SELECT on the view and no write access to customer tables. TLS is supported via PostgreSQL connection settings, using `sslmode=require` to require TLS. The native TLS connector validates the server certificate and hostname against the system trust store.
+### Feedback view contract
+
+Expose a **view** with these seven columns. The CLI checks the declared types and validates nullability and content on each selected row.
+
+| Column | PostgreSQL type | MySQL type | Requirement |
+| --- | --- | --- | --- |
+| `product_id` | `text` | Character string | Nonblank stable product ID |
+| `feedback_source_id` | `text` | Character string | Nonblank stable channel/source ID |
+| `source_message_id` | `text` | Character string | Nonblank stable ID within product and source |
+| `customer_id` | `text` | Character string | Nonblank stable application customer ID, or NULL |
+| `submitted_at` | `timestamp with time zone` | `DATETIME` or `TIMESTAMP` | UTC-normalized instant |
+| `feedback_text` | `text` | Character string | Nonblank message |
+| `source_reference` | `text` | Character string | Optional locator, or NULL |
+
+MySQL character strings are `CHAR`, `VARCHAR`, and the `TEXT` family. Cast numeric IDs and untyped NULL placeholders in the view, for example `CAST(id AS CHAR CHARACTER SET utf8mb4)` and `CAST(NULL AS CHAR(200))` in MySQL. Use `VARCHAR` or `TEXT` when trailing spaces in an ID are significant.
+
+Map timestamps using the source's actual timezone. In PostgreSQL, use an expression such as `submitted_local AT TIME ZONE 'America/New_York'`. MySQL reads in a UTC session so `TIMESTAMP` values arrive as UTC. For MySQL `DATETIME`, expose values already stored as UTC or convert local time explicitly with `CONVERT_TZ(submitted_local, '+05:30', '+00:00')` for a source stored at that fixed offset. For named zones, load the MySQL timezone tables and use the source's actual zone so the conversion accounts for daylight-saving rules. The setup flag confirms the mapping. The type check alone cannot verify it.
+
+Grant the connection account SELECT on the view only. Ship Signal captures feedback in a read-only transaction. PostgreSQL supports TLS through its connection settings, using `sslmode=require` to require TLS. MySQL requires verified TLS for TCP connections by default. For a private CA, pass a URL-encoded certificate path in `root_cert_path`, or install the CA in the system trust store. Use `--mysql-no-tls` for disposable local MySQL fixtures.
+
+### Run the CLI
+
+Set `FEEDBACK_DATABASE_URL` to choose the backend. PostgreSQL defaults to the `public` schema. MySQL uses the database in the `mysql://` URL. Use `--schema` to select another namespace or `--view` to override the default view name `ship_signal_feedback`.
 
 ```sh
 export FEEDBACK_DATABASE_URL='postgresql://feedback_reader:feedback_reader@localhost:55439/ship_signal_feedback'
@@ -72,11 +89,18 @@ cargo run -- analyze --product demo-shop --timestamps-mapped-to-utc \
 cargo run -- report --product demo-shop --state ./ship-signal.sqlite 1
 ```
 
-Every command requires a nonblank `--product`. A shared view and SQLite file may contain multiple products, but each invocation operates on only the supplied product. PostgreSQL filters by product before capturing messages, validating rows, or calling the classifier. Diagnostics cover only matching rows; rows with a different or NULL product ID are outside this read. Product IDs are exact, case-sensitive opaque strings. Run separate analyses for separate products.
+For MySQL, select a MySQL URL and use the same commands. For example:
+
+```sh
+export FEEDBACK_DATABASE_URL='mysql://feedback_reader:password@mysql.example.com:3306/ship_signal_feedback'
+cargo run -- validate --product demo-shop --timestamps-mapped-to-utc
+```
+
+Every command requires a nonblank `--product`. A shared view and SQLite file may contain multiple products, but each invocation operates on only the supplied product. The feedback database filters by product before Ship Signal captures messages, validates rows, or calls the classifier. Diagnostics cover only matching rows; rows with a different or NULL product ID are outside this read. Product IDs are exact, case-sensitive opaque strings. Run separate analyses for separate products.
 
 Saved reports retain their product even when there is no feedback: an empty analysis contains one product result with a zero denominator and no needs. `report`, `review-report`, and `review-needs` require both the product and a report ID owned by that product; a mismatch fails before a model request or review decision. `need-identities` lists only the supplied product's mappings. `validate` checks the shared view's schema and timestamp-mapping confirmation; it does not check whether that product has rows. An absent product is valid and an analysis saves an empty result.
 
-The interval is start-inclusive and end-exclusive. Only message indices and text from the selected product are sent to the configured OpenAI model for classification; feedback text may itself contain personal information. The model must support Rig structured output and should be qualified against representative feedback before production use. Each completed report includes copied inputs, classifications, supporting message indices, variants, counts, percentages, and invalid-row diagnostics. Null submission times for the selected product cannot be assigned to an interval, so they are reported as invalid on every read for that product. Duplicate message identities within a capture are excluded as ambiguous. Identified customers are counted once per product and need, across sources; unidentified feedback remains evidence but does not enter the denominator.
+The interval is start-inclusive and end-exclusive. Cutoffs exclude leap seconds. MySQL query cutoffs must fall within UTC years 1000 through 9999. Only message indices and text from the selected product are sent to the configured OpenAI model for classification; feedback text may itself contain personal information. The model must support Rig structured output and should be qualified against representative feedback before production use. Each completed report includes copied inputs, classifications, supporting message indices, variants, counts, percentages, and invalid-row diagnostics. Null submission times and malformed MySQL calendar dates for the selected product cannot be assigned to an interval, so they are reported as invalid on every read for that product. Duplicate message identities within a capture are excluded as ambiguous. Identified customers are counted once per product and need, across sources; unidentified feedback remains evidence but does not enter the denominator.
 
 ### Classification response format
 
@@ -112,7 +136,7 @@ Need-to-identity lookup ignores case using Rust Unicode lowercasing: `Export ord
 
 After mapping needs, `review-report` creates a separate report from the saved feedback and classifications using the current mappings. It does not read the feedback source or call the model; `reviewed_from` identifies the original report. The original remains unchanged. To correct a mapping, run `map-need` with the current ID in `--previous-identity` and the corrected ID in `--identity`; the command fails if the current mapping has changed. Review the affected reports again as needed. The ID is not an implementation scope or a cooldown match. Ticket matching and cooldown similarity still require their own decisions in SUC-21 and SUC-22.
 
-## Synthetic feedback database
+## Synthetic feedback databases
 
 The example is fictitious and uses a disposable local database; production customers supply and manage their own feedback source. With PostgreSQL utilities on `PATH`, create a local example with:
 
@@ -124,5 +148,14 @@ psql -h 127.0.0.1 -p 55439 -d ship_signal_feedback -v ON_ERROR_STOP=1 -f fixture
 ```
 
 This example uses trust authentication and is only for local development. The fixture explicitly maps its source timestamps from UTC. To run connector tests, also load `fixtures/test_invalid.sql` and set `SHIP_SIGNAL_TEST_POSTGRES` to the example reader URL. The connector tests are marked ignored by default. Run them explicitly with `cargo test --test postgres -- --ignored`; run the remaining suite with `cargo test`.
+
+On a disposable MySQL 8.0 or 8.4 instance, load the fixture as an administrator. The fixture creates the database and reader account and sets a non-UTC server default to exercise UTC mapping.
+
+```sh
+mysql --host=127.0.0.1 --port=3306 --user=root --password < fixtures/mysql_feedback.sql
+export SHIP_SIGNAL_TEST_MYSQL='mysql://feedback_reader:feedback_reader@127.0.0.1:3306/ship_signal_feedback?prefer_socket=false'
+FEEDBACK_DATABASE_URL="$SHIP_SIGNAL_TEST_MYSQL" cargo run -- validate \
+  --product demo-shop --timestamps-mapped-to-utc --mysql-no-tls
+```
 
 The current development schema uses `need` consistently in classification/report JSON, mapping and deferral columns, and `map-need --need`. It expects a fresh SQLite state file; no migration or old-field aliases are provided for the earlier `name`/`label` format.

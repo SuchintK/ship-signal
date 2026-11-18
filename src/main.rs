@@ -1,9 +1,12 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use clap::{Parser, Subcommand};
+use clap::{Args as ClapArgs, Parser, Subcommand};
 use rig_agent::prelude::*;
 use rig_core::providers::openai::OpenAI;
-use ship_signal::{Classifications, NeedSuggestion, Workflow, postgres_source::PostgresSource};
+use ship_signal::{
+    Classifications, FeedbackSource, NeedSuggestion, Workflow, mysql_source::MysqlSource,
+    postgres_source::PostgresSource,
+};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -12,34 +15,71 @@ struct Args {
     #[command(subcommand)]
     command: Command,
 }
+#[derive(ClapArgs)]
+struct FeedbackConnection {
+    /// PostgreSQL connection string or mysql:// URL.
+    #[arg(long, env = "FEEDBACK_DATABASE_URL", hide_env_values = true)]
+    database_url: String,
+    /// PostgreSQL schema or MySQL database. Defaults to public or the MySQL URL database.
+    #[arg(long)]
+    schema: Option<String>,
+    #[arg(long, default_value = "ship_signal_feedback")]
+    view: String,
+    /// Confirm the view explicitly maps source timestamps to UTC instants.
+    #[arg(long)]
+    timestamps_mapped_to_utc: bool,
+    /// Allow a MySQL connection without TLS for local development.
+    #[arg(long)]
+    mysql_no_tls: bool,
+}
+
+impl FeedbackConnection {
+    fn connect(self) -> Result<Box<dyn FeedbackSource>> {
+        if self.database_url.starts_with("mysql://") {
+            let options =
+                mysql::Opts::from_url(&self.database_url).context("invalid MySQL feedback URL")?;
+            let tls = options
+                .get_ssl_opts()
+                .cloned()
+                .unwrap_or_default()
+                .with_danger_skip_domain_validation(false)
+                .with_danger_accept_invalid_certs(false);
+            let options = mysql::OptsBuilder::from_opts(options)
+                .prefer_socket(false)
+                .ssl_opts((!self.mysql_no_tls).then_some(tls));
+            Ok(Box::new(MysqlSource::connect(
+                options.into(),
+                self.schema.as_deref(),
+                &self.view,
+                self.timestamps_mapped_to_utc,
+            )?))
+        } else {
+            anyhow::ensure!(!self.mysql_no_tls, "--mysql-no-tls requires a mysql:// URL");
+            Ok(Box::new(PostgresSource::connect(
+                &self.database_url,
+                self.schema.as_deref().unwrap_or("public"),
+                &self.view,
+                self.timestamps_mapped_to_utc,
+            )?))
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
-    /// Validate the shared PostgreSQL view contract for a selected product.
+    /// Validate the shared feedback view contract for a selected product.
     Validate {
         #[arg(long, value_parser = parse_product_id)]
         product: String,
-        #[arg(long, env = "FEEDBACK_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
-        #[arg(long, default_value = "public")]
-        schema: String,
-        #[arg(long, default_value = "ship_signal_feedback")]
-        view: String,
-        /// Confirm the view explicitly maps source timestamps to UTC instants.
-        #[arg(long)]
-        timestamps_mapped_to_utc: bool,
+        #[command(flatten)]
+        source: FeedbackConnection,
     },
     /// Analyze one product in an explicit half-open UTC interval and save its report.
     Analyze {
         #[arg(long, value_parser = parse_product_id)]
         product: String,
-        #[arg(long, env = "FEEDBACK_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
-        #[arg(long, default_value = "public")]
-        schema: String,
-        #[arg(long, default_value = "ship_signal_feedback")]
-        view: String,
-        #[arg(long)]
-        timestamps_mapped_to_utc: bool,
+        #[command(flatten)]
+        source: FeedbackConnection,
         #[arg(long)]
         start: DateTime<Utc>,
         #[arg(long)]
@@ -120,34 +160,24 @@ Use needs: [] when there is no explicit feature request. Do not add Markdown or 
 
 fn main() -> Result<()> {
     match Args::parse().command {
-        Command::Validate {
-            product,
-            database_url,
-            schema,
-            view,
-            timestamps_mapped_to_utc,
-        } => {
-            PostgresSource::connect(&database_url, &schema, &view, timestamps_mapped_to_utc)?;
+        Command::Validate { product, source } => {
+            source.connect()?;
             println!(
                 "Feedback view contract is valid. Selected product: {product}. Confirm the database account only has the necessary read access."
             );
         }
         Command::Analyze {
             product,
-            database_url,
-            schema,
-            view,
-            timestamps_mapped_to_utc,
+            source,
             start,
             end,
             state,
             model,
         } => {
-            let mut source =
-                PostgresSource::connect(&database_url, &schema, &view, timestamps_mapped_to_utc)?;
+            let mut source = source.connect()?;
             let mut workflow = Workflow::open(state)?;
             let runtime = tokio::runtime::Runtime::new()?;
-            let report = workflow.analyze(&product, &mut source, start, end, |feedback| {
+            let report = workflow.analyze(&product, source.as_mut(), start, end, |feedback| {
                 if feedback.is_empty() {
                     return Ok(vec![]);
                 }

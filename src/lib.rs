@@ -8,6 +8,8 @@ use std::{
     path::Path,
 };
 
+mod feedback_row;
+pub mod mysql_source;
 mod need_review;
 pub mod postgres_source;
 pub use need_review::{NeedSuggestion, SuggestionKind};
@@ -235,7 +237,7 @@ impl Workflow {
     pub fn analyze(
         &mut self,
         product_id: &str,
-        source: &mut impl FeedbackSource,
+        source: &mut (impl FeedbackSource + ?Sized),
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         classify: impl FnOnce(&[Feedback]) -> Result<Vec<Classification>>,
