@@ -12,7 +12,7 @@
 <header>
 <p>Ship Signal · Code walkthrough · PR #5</p>
 <h1>Analyze feedback from MySQL</h1>
-<p class="meta">Analyzed source SHA: fe33c1a59ac3b01a99354a3095b163919799187e<br>Base SHA: 0110b795642dbc5fa1da29250f76df04f17ba9c5</p>
+<p class="meta">Analyzed source SHA: 3e9609324e4ebfccca7b5b452a589bc656a6a758<br>Base SHA: 0110b795642dbc5fa1da29250f76df04f17ba9c5</p>
 <p>Set <code>FEEDBACK_DATABASE_URL</code> to a MySQL connection URL to validate the view and analyze feedback for one product. The resulting report can be loaded from SQLite using the same commands as a PostgreSQL report.</p>
 </header>
 <nav aria-label="Contents">
@@ -105,17 +105,17 @@ Qualifies above 25%       true</code></pre>
 <section id="verification">
 <h2>Verify both sources</h2>
 <p>Local verification ran against MySQL 8.0.44 and PostgreSQL 14.20, plus temporary SQLite files. The tests cover UTC conversion under a non-UTC MySQL default, interval boundaries, case-sensitive product isolation, invalid and duplicate rows, SELECT-only access, and the CLI’s empty-product path. The parity test asserts equality of the complete report and reopens the MySQL report from SQLite.</p>
-<figure data-source="tests/mysql.rs" data-start="207" data-end="216" data-start-anchor="let report = mysql_workflow.analyze" data-end-anchor="assert!(mysql_workflow.report(&quot;another-product&quot;, report.id).is_err());"><figcaption>tests/mysql.rs · lines 207–216 <span>exact source excerpt</span></figcaption><pre><code>207          let report = mysql_workflow.analyze(product, &amp;mut mysql, start, end, classify)?;
-208          assert_eq!(
-209              report,
-210              pg_workflow.analyze(product, &amp;mut postgres, start, end, classify)?
-211          );
+<figure data-source="tests/mysql.rs" data-start="211" data-end="220" data-start-anchor="let report = mysql_workflow.analyze" data-end-anchor="assert!(mysql_workflow.report(&quot;another-product&quot;, report.id).is_err());"><figcaption>tests/mysql.rs · lines 211–220 <span>exact source excerpt</span></figcaption><pre><code>211          let report = mysql_workflow.analyze(product, &amp;mut mysql, start, end, classify)?;
 212          assert_eq!(
 213              report,
-214              Workflow::open(&amp;mysql_state)?.report(product, report.id)?
+214              pg_workflow.analyze(product, &amp;mut postgres, start, end, classify)?
 215          );
-216          assert!(mysql_workflow.report(&quot;another-product&quot;, report.id).is_err());</code></pre></figure>
-<p>A separate CLI run checked trusted TLS. The required <code>PostgreSQL integration</code> CI job also runs the MySQL suite against MySQL 8.4 and PostgreSQL 17. The model responses in these integration tests are controlled, so model qualification is a separate step.</p>
+216          assert_eq!(
+217              report,
+218              Workflow::open(&amp;mysql_state)?.report(product, report.id)?
+219          );
+220          assert!(mysql_workflow.report(&quot;another-product&quot;, report.id).is_err());</code></pre></figure>
+<p>The MySQL fixture sets UTF-8 before importing product IDs so the accent-isolation test uses the same bytes on each runner. A separate CLI run checked trusted TLS. The required <code>PostgreSQL integration</code> CI job also runs the MySQL suite against MySQL 8.4 and PostgreSQL 17. The model responses in these integration tests are controlled, so model qualification is a separate step.</p>
 </section>
 
 <footer>
