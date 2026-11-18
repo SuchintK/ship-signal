@@ -47,7 +47,7 @@ jobs:
         run: cargo test --locked --all-targets
 
   postgres:
-    name: PostgreSQL integration
+    name: Feedback database integration
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -63,8 +63,20 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: mysql
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 24
     env:
       SHIP_SIGNAL_TEST_POSTGRES: postgresql://feedback_reader:feedback_reader@127.0.0.1:5432/ship_signal_feedback
+      SHIP_SIGNAL_TEST_MYSQL: mysql://feedback_reader:feedback_reader@127.0.0.1:3306/ship_signal_feedback?prefer_socket=false
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,8 +87,8 @@ jobs:
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: postgres
-      - name: Load synthetic feedback fixtures
+          key: feedback-databases
+      - name: Load synthetic PostgreSQL feedback
         env:
           POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
@@ -84,3 +96,9 @@ jobs:
           docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d ship_signal_feedback -v ON_ERROR_STOP=1 < fixtures/test_invalid.sql
       - name: Run PostgreSQL integration tests
         run: cargo test --locked --test postgres -- --ignored
+      - name: Load synthetic MySQL feedback
+        env:
+          MYSQL_CONTAINER: ${{ job.services.mysql.id }}
+        run: docker exec -i "$MYSQL_CONTAINER" sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' < fixtures/mysql_feedback.sql
+      - name: Run MySQL integration and cross-database parity tests
+        run: cargo test --locked --test mysql -- --ignored

@@ -19,6 +19,7 @@ rig-core = { version = "0.46", features = ["reqwest"] }
 rig-agent = "0.46"
 
 schemars = "1"
+mysql = { version = "28", default-features = false, features = ["minimal-rust", "native-tls", "chrono"] }
 
 [dev-dependencies]
 tempfile = "3"
