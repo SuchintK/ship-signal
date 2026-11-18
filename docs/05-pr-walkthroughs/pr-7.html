@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ship Signal · Weekly analysis on schedule</title>
+<style>
+:root{color-scheme:dark;--bg:#101820;--panel:#192630;--ink:#eef5f6;--muted:#b3c6cf;--line:#36505e;--accent:#8ce0c2}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.65 system-ui,sans-serif}
+main{max-width:1080px;margin:auto;padding:44px 28px}
+h1{font-size:clamp(34px,6vw,58px);line-height:1.12;margin:.28em 0}
+h2{font-size:28px;line-height:1.3;margin:44px 0 12px}h3{font-size:20px;line-height:1.35;margin:30px 0 10px}
+a{color:var(--accent);text-underline-offset:4px}a:focus-visible{outline:3px solid var(--accent)}
+.meta,figcaption{color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+nav{border-block:1px solid var(--line);padding:13px 0;margin:26px 0}
+nav ul{margin:0;padding:0 0 0 20px}nav>ul{display:flex;flex-wrap:wrap;gap:14px 32px}nav>ul>li{margin-right:10px}
+nav li{font-size:15px}nav li li{font-size:13px}
+pre{overflow:auto;background:#0a1219;border:1px solid var(--line);padding:17px;border-radius:10px}
+code{font-family:ui-monospace,monospace;font-size:.88em}p code,li code,td code{color:var(--accent);overflow-wrap:anywhere}
+figure{margin:20px 0 26px}figure pre{margin-top:5px}
+.note{padding:12px 20px;background:var(--panel);border-left:4px solid var(--accent)}
+.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:15px}th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+footer{border-top:1px solid var(--line);margin-top:40px;padding-top:20px;color:var(--muted);font-size:14px}
+@media(max-width:600px){main{padding:24px 16px}pre{padding:12px}nav>ul{gap:12px 22px}}
+@media print{body{background:white;color:#15232c}pre,.note{background:#f3f6f7;white-space:pre-wrap}a,p code,li code,td code{color:#16644f}nav{display:none}}
+</style>
+</head>
+<body><main>
+<header>
+<p class="meta">Ship Signal · Code walkthrough · PR #7</p>
+<h1>Run weekly analysis on schedule</h1>
+<p class="meta">Analyzed source SHA: 42af302ea6f89299a518582b019a4538f77c358b<br>Base SHA: c8d0e5075d7086e750f8635754d82f7c6969f652</p>
+<p>Start <code>schedule</code> for one product. Every Friday at 09:00 in its assigned timezone, the scheduler closes the feedback interval and saves an original report. The weekly cycle also records the Saturday approval cutoff.</p>
+</header>
+<nav aria-label="Contents">
+<ul>
+<li><a href="#example">Run a weekly analysis</a></li>
+<li><a href="#schedule">Decide when to run</a>
+<ul><li><a href="#first-friday">Find the first Friday</a></li><li><a href="#catch-up">Advance after downtime</a></li></ul></li>
+<li><a href="#persist">Save the original report</a></li>
+<li><a href="#verification">Verification</a></li>
+</ul>
+</nav>
+
+<section id="example">
+<h2>Run a weekly analysis</h2>
+<p>Set the feedback database URL, model, and provider credentials as described in the setup guide. Start the foreground scheduler and use a second terminal to list cycles. Open a completed cycle's original report using its <code>report_id</code>. <a href="../../README.md#schedule-the-weekly-analysis">Scheduler setup</a></p>
+<pre><code>cargo run -- schedule --product shop --timezone Asia/Kolkata \
+  --state ./shop.sqlite --timestamps-mapped-to-utc
+cargo run -- weekly-cycles --product shop --state ./shop.sqlite
+# Replace REPORT_ID with the value shown for the completed cycle.
+cargo run -- report --product shop --state ./shop.sqlite REPORT_ID</code></pre>
+<p>The following excerpt shows an illustrative completed-cycle response. The workflow test observes these dates for <code>shop</code> with a controlled source and classifier. The report ID is an example.</p>
+<pre><code>{
+  "product_id": "shop",
+  "friday": "2026-11-20",
+  "timezone": "Asia/Kolkata",
+  "feedback_start": "2026-11-13T03:30:00Z",
+  "analysis_cutoff": "2026-11-20T03:30:00Z",
+  "approval_cutoff": "2026-11-21T03:30:00Z",
+  "status": "completed",
+  "report_id": 1
+}</code></pre>
+<p>The cycle uses local calendar dates for its deadlines and stores UTC instants. In this example, Friday 09:00 in Kolkata is 03:30 UTC. The interval includes a submission at <code>2026-11-13T03:30:00Z</code>. A submission at <code>2026-11-20T03:30:00Z</code> belongs to the following week.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Command</th><th>Reads</th><th>Writes or displays</th></tr></thead>
+<tbody>
+<tr><td><code>schedule</code></td><td>SQLite schedule and the selected product's feedback when due.</td><td>Saves cycles and reports. Prints a completed cycle as JSON.</td></tr>
+<tr><td><code>weekly-cycles</code></td><td>The product's cycle records in SQLite.</td><td>Lists deadlines, status, and original report IDs.</td></tr>
+<tr><td><code>report</code></td><td>One saved report for the supplied product and ID.</td><td>Displays the saved evidence, classifications, and demand.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section id="schedule">
+<h2>Decide when to run</h2>
+<p>The <code>Command::Schedule</code> arm in <code>src/main.rs</code> opens a scheduler and passes the current UTC time into <code>WeeklyScheduler::tick</code> at startup and every 30 seconds. A tick is one check for due analysis. Passing the time explicitly lets workflow tests move it across a cutoff.</p>
+<figure data-source="src/main.rs" data-start="260" data-end="271"><figcaption>src/main.rs · lines 260–271 <span>exact source excerpt</span></figcaption><pre><code>260              let mut scheduler = WeeklyScheduler::open(state, &amp;product, &amp;timezone)?;
+261              let runtime = tokio::runtime::Runtime::new()?;
+262              loop {
+263                  match scheduler.tick(Utc::now(), &amp;mut source, |feedback| {
+264                      classify_feedback(&amp;runtime, &amp;model, feedback)
+265                  }) {
+266                      Ok(Some(cycle)) =&gt; println!(&quot;{}&quot;, serde_json::to_string(&amp;cycle)?),
+267                      Ok(None) =&gt; {}
+268                      Err(error) =&gt; eprintln!(&quot;Weekly schedule for {product} failed: {error}&quot;),
+269                  }
+270                  thread::sleep(Duration::from_secs(30));
+271              }</code></pre></figure>
+<p>On startup the scheduler opens the SQLite state file, resolves its canonical path, and locks the adjacent <code>.weekly.lock</code> file. A second scheduler for the same state file exits when it cannot acquire that lock. The report and cycle listing commands can still read SQLite.</p>
+
+<h3 id="first-friday">Find the first Friday</h3>
+<p>For a product with no planned cycle, <code>first_cycle</code> converts the supplied instant to the configured timezone and checks the local Friday cutoff. Before or exactly at that cutoff it uses that Friday. After the cutoff it advances a week. The first interval uses the preceding Friday in the assigned timezone.</p>
+<figure data-source="src/weekly_schedule.rs" data-start="321" data-end="342"><figcaption>src/weekly_schedule.rs · lines 321–342 <span>exact source excerpt</span></figcaption><pre><code>321  fn first_cycle(now: DateTime&lt;Utc&gt;, product_id: &amp;str, zone: &amp;TimeZone) -&gt; Result&lt;WeeklyCycle&gt; {
+322      let local = zone.to_datetime(Timestamp::from_second(now.timestamp())?);
+323      let today = NaiveDate::from_ymd_opt(
+324          local.year().into(),
+325          local.month().try_into()?,
+326          local.day().try_into()?,
+327      )
+328      .context(&quot;local schedule date is out of range&quot;)?;
+329      // Resolve the latest local Friday before advancing. On a date-line change
+330      // its compatible cutoff can fall on Saturday.
+331      let days_since_friday =
+332          (today.weekday().num_days_from_monday() + 7 - Weekday::Fri.num_days_from_monday()) % 7;
+333      let mut friday = today
+334          .checked_sub_days(Days::new(days_since_friday.into()))
+335          .context(&quot;Friday date is out of range&quot;)?;
+336      if cutoff(friday, zone)? &lt; now {
+337          friday = friday
+338              .checked_add_days(Days::new(7))
+339              .context(&quot;next Friday date is out of range&quot;)?;
+340      }
+341      WeeklyCycle::plan(product_id, friday, zone, previous_cutoff(friday, zone)?)
+342  }</code></pre></figure>
+<p>Jiff resolves each local cutoff using bundled IANA timezone rules. A daylight-saving change can move a cutoff in UTC while leaving the scheduled local time at 09:00. Once a cycle becomes due, its saved interval, timezone, and approval cutoff are fixed. A timezone change affects the first Friday still ahead in both zones. That transition interval starts at the prior cycle's saved cutoff, or at Friday 09:00 in the new zone if this is the first cycle.</p>
+
+<h3 id="catch-up">Advance after downtime</h3>
+<p>The schedule first advances through due cycles in SQLite. Each newly due cycle becomes <code>pending</code>. An earlier pending cycle becomes <code>skipped</code> when a later one becomes due. The next cycle starts at the cutoff just saved, so skipped weeks keep their own intervals.</p>
+<figure data-source="src/weekly_schedule.rs" data-start="243" data-end="266"><figcaption>src/weekly_schedule.rs · lines 243–266 <span>exact source excerpt</span></figcaption><pre><code>243          while planned.analysis_cutoff &lt;= now {
+244              tx.execute(
+245                  &quot;UPDATE weekly_cycles SET status = &#x27;skipped&#x27;
+246                   WHERE product_id = ?1 AND status = &#x27;pending&#x27;&quot;,
+247                  [&amp;self.product_id],
+248              )?;
+249              tx.execute(
+250                  &quot;UPDATE weekly_cycles SET status = &#x27;pending&#x27;
+251                   WHERE product_id = ?1 AND friday = ?2 AND status = &#x27;planned&#x27;&quot;,
+252                  params![self.product_id, planned.friday],
+253              )?;
+254              let next_friday = planned
+255                  .friday
+256                  .checked_add_days(Days::new(7))
+257                  .context(&quot;next Friday date is out of range&quot;)?;
+258              let zone = self.time_zones.get(&amp;planned.timezone)?;
+259              planned = WeeklyCycle::plan(
+260                  &amp;self.product_id,
+261                  next_friday,
+262                  &amp;zone,
+263                  planned.analysis_cutoff,
+264              )?;
+265              planned.insert_plan(&amp;tx)?;
+266          }</code></pre></figure>
+<p>In the multiweek outage test, the clock jumps to Monday, December 7 in UTC. The latest due cycle covers <code>[November 27 09:00, December 4 09:00)</code> and keeps Saturday, December 5 at 09:00 as its approval cutoff. The November 20 and November 27 cycles are skipped. <a href="../../tests/weekly_schedule.rs">Workflow tests</a></p>
+</section>
+
+<section id="persist">
+<h2>Save the original report</h2>
+<p>The selected cycle supplies the product and both interval endpoints to the existing analysis workflow. The PostgreSQL or MySQL connector filters by product before validation runs. Ship Signal reads the evidence, classifies it, and calculates demand before starting the report transaction. The same product owns the report when the interval contains zero valid feedback rows.</p>
+<figure data-source="src/weekly_schedule.rs" data-start="208" data-end="229"><figcaption>src/weekly_schedule.rs · lines 208–229 <span>exact source excerpt</span></figcaption><pre><code>208          let Some(mut cycle) = self.due_cycle(now)? else {
+209              return Ok(None);
+210          };
+211          let report = self.workflow.analyzed_report(
+212              &amp;cycle.product_id,
+213              source,
+214              cycle.feedback_start,
+215              cycle.analysis_cutoff,
+216              classify,
+217          )?;
+218          let tx = self.workflow.connection.transaction()?;
+219          let report = report.save(&amp;tx, &amp;cycle.product_id)?;
+220          let completed = tx.execute(
+221              &quot;UPDATE weekly_cycles SET status = &#x27;completed&#x27;, report_id = ?3
+222               WHERE product_id = ?1 AND friday = ?2 AND status = &#x27;pending&#x27;&quot;,
+223              params![cycle.product_id, cycle.friday, report.id],
+224          )?;
+225          ensure!(completed == 1, &quot;weekly cycle is no longer pending&quot;);
+226          tx.commit()?;
+227          cycle.status = WeeklyCycleStatus::Completed;
+228          cycle.report_id = Some(report.id);
+229          Ok(Some(cycle))</code></pre></figure>
+<p>A transaction commits the insert and the cycle update together. When a failure leaves the cycle pending, a later tick can retry it while it remains the latest due one. The report stays available after a successful commit even if the scheduler exits before printing the result. <a href="../06-database-design/database-design.html#tables">SQLite tables and report relationship</a></p>
+<p class="note">A process interruption before completion can repeat a feedback read or model request. After completion, an ordinary restart reads the saved schedule and leaves the original report intact.</p>
+</section>
+
+<section id="verification">
+<h2>Verification</h2>
+<p>The cutoff test advances a controlled clock from one second before the first cutoff to the cutoff itself and checks the saved messages. Its classifier returns an empty list of needs for each valid message.</p>
+<figure data-source="tests/weekly_schedule.rs" data-start="79" data-end="93"><figcaption>tests/weekly_schedule.rs · lines 79–93 <span>exact source excerpt</span></figcaption><pre><code> 79      let cycle = scheduler
+ 80          .tick(utc(&quot;2026-11-20T03:30:00Z&quot;), &amp;mut source, classify)?
+ 81          .unwrap();
+ 82      let workflow = Workflow::open(&amp;state)?;
+ 83      let report = workflow.report(&quot;shop&quot;, cycle.report_id.unwrap())?;
+ 84      let messages: Vec&lt;_&gt; = report
+ 85          .input
+ 86          .feedback
+ 87          .iter()
+ 88          .map(|row| row.text.as_str())
+ 89          .collect();
+ 90      assert_eq!(messages, [&quot;at start&quot;, &quot;after start&quot;, &quot;before end&quot;]);
+ 91      assert_eq!(report.start, utc(&quot;2026-11-13T03:30:00Z&quot;));
+ 92      assert_eq!(report.end, utc(&quot;2026-11-20T03:30:00Z&quot;));
+ 93      assert_eq!(cycle.approval_cutoff, utc(&quot;2026-11-21T03:30:00Z&quot;));</code></pre></figure>
+<p>Local checks passed for formatting, Clippy, all 33 standard Rust tests, and all 9 connector fixture tests against PostgreSQL 14 and MySQL 8.0. The scheduler tests use temporary SQLite files and cover daylight-saving changes, timezone transitions, skipped weeks, product isolation, and rollback if the cycle update fails. A separate CLI smoke check confirmed startup, listing, and duplicate-launch protection. Live provider behavior and production process-supervisor setup remain unverified.</p>
+</section>
+
+<footer>
+<a href="https://github.com/SuchintK/ship-signal/pull/7">GitHub PR #7</a> ·
+<a href="https://linear.app/suchint/issue/SUC-20/ship-signal-run-the-weekly-analysis-on-schedule">Linear SUC-20</a> ·
+<a href="README.md">Walkthrough index</a>
+</footer>
+</main></body>
+</html>
