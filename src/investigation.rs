@@ -164,7 +164,8 @@ pub struct RepositorySnapshot {
     pub repository: String,
     pub base_sha: String,
     pub live_sha: Option<String>,
-    pub paths: Vec<String>,
+    pub base_paths: Vec<String>,
+    pub live_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -338,22 +339,22 @@ impl Workflow {
             state::claim_scopes(&self.connection, product)?;
         }
         let mut stored = match state::load(&self.connection, product_id, root_id)? {
-            Some(stored) if !stored.result.needs_identity_review => {
+            Some(stored) if !stored.needs_identity_review => {
                 ensure!(
-                    report_id == root_id || report_id == stored.result.report_id,
+                    report_id == root_id || report_id == stored.report_id,
                     "this analysis already has an investigation for report {}",
-                    stored.result.report_id
+                    stored.report_id
                 );
                 stored
             }
             _ => {
-                let stored = plan(&report, product, sources, model)?;
+                let stored = plan(&self.connection, &report, product, sources, model)?;
                 state::save(&self.connection, root_id, &stored)?;
                 stored
             }
         };
         stored.deliver(&self.connection, root_id, product, sources)?;
-        Ok(stored.result)
+        Ok(stored.into_report())
     }
 
     fn investigation_root(&self, report: &Report) -> Result<i64> {
@@ -379,6 +380,7 @@ impl Workflow {
 }
 
 fn plan(
+    connection: &Connection,
     report: &Report,
     product: &ProductConfig,
     sources: &mut impl InvestigationSources,
@@ -399,10 +401,19 @@ fn plan(
         return Ok(stored);
     }
 
-    let mut tickets = sources.tickets(product)?;
-    tickets.retain(|ticket| product.scopes.contains(&ticket.scope));
-    tickets.sort_by(|left, right| left.id.cmp(&right.id));
-    tickets.dedup_by(|left, right| left.id == right.id);
+    let tickets = scoped_tickets(product, sources)?;
+    for ticket in &tickets {
+        if state::foreign_issue(connection, &product.product_id, &ticket.id)? {
+            for evidence in demand {
+                stored.findings(vec![(Finding::review(
+                    evidence,
+                    "A Linear issue in this scope previously received evidence for another product. Review its product ownership.".into(),
+                ), None)]);
+            }
+            return Ok(stored);
+        }
+    }
+    stored.remember_tickets(&tickets)?;
     let pull_requests = sources.pull_requests(product, &tickets)?;
     let repositories = product
         .repositories
@@ -423,6 +434,17 @@ fn plan(
         stored.findings(investigate_need(report, &context, product, sources, model)?);
     }
     Ok(stored)
+}
+
+fn scoped_tickets(
+    product: &ProductConfig,
+    sources: &mut impl InvestigationSources,
+) -> Result<Vec<Ticket>> {
+    let mut tickets = sources.tickets(product)?;
+    tickets.retain(|ticket| product.scopes.contains(&ticket.scope));
+    tickets.sort_by(|left, right| left.id.cmp(&right.id));
+    tickets.dedup_by(|left, right| left.id == right.id);
+    Ok(tickets)
 }
 
 fn demand_evidence(report: &Report, need: &NeedReport) -> Result<DemandEvidence> {
@@ -517,18 +539,21 @@ fn read_selected_code(
             .iter()
             .find(|repository| repository.repository == selection.repository)
             .context("investigation selected a repository outside the product")?;
-        ensure!(
-            repository.paths.contains(&selection.path),
-            "investigation selected an unknown code path"
-        );
-        let sha = if selection.live {
-            repository
-                .live_sha
-                .as_deref()
-                .context("investigation selected an unconfigured live ref")?
+        let (sha, paths) = if selection.live {
+            (
+                repository
+                    .live_sha
+                    .as_deref()
+                    .context("investigation selected an unconfigured live ref")?,
+                &repository.live_paths,
+            )
         } else {
-            &repository.base_sha
+            (repository.base_sha.as_str(), &repository.base_paths)
         };
+        ensure!(
+            paths.contains(&selection.path),
+            "investigation selected a path absent at the requested revision"
+        );
         let retrieved = sources.code(repository, &selection)?;
         ensure!(
             retrieved.sha == sha

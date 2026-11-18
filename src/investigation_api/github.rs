@@ -85,6 +85,31 @@ struct PullFile {
     filename: String,
 }
 
+impl Tree {
+    fn file_paths(self, search_paths: &[String]) -> Result<BTreeSet<String>> {
+        ensure!(!self.truncated, "GitHub truncated the repository tree");
+        Ok(self
+            .tree
+            .into_iter()
+            .filter(|entry| {
+                entry.kind == "blob" && matches!(entry.mode.as_str(), "100644" | "100755")
+            })
+            .filter(|entry| {
+                search_paths.is_empty()
+                    || search_paths.iter().any(|prefix| {
+                        let prefix = prefix.trim_end_matches('/');
+                        entry.path == prefix
+                            || entry
+                                .path
+                                .strip_prefix(prefix)
+                                .is_some_and(|rest| rest.starts_with('/'))
+                    })
+            })
+            .map(|entry| entry.path)
+            .collect())
+    }
+}
+
 impl Sources {
     fn github(
         &self,
@@ -141,48 +166,32 @@ impl Sources {
             &["git", "trees", &commit.commit.tree.sha],
             &[("recursive", "1")],
         )?;
-        ensure!(!tree.truncated, "GitHub truncated the repository tree");
-        Ok(tree
-            .tree
-            .into_iter()
-            .filter(|entry| {
-                entry.kind == "blob" && matches!(entry.mode.as_str(), "100644" | "100755")
-            })
-            .filter(|entry| {
-                route.search_paths.is_empty()
-                    || route.search_paths.iter().any(|prefix| {
-                        let prefix = prefix.trim_end_matches('/');
-                        entry.path == prefix
-                            || entry
-                                .path
-                                .strip_prefix(prefix)
-                                .is_some_and(|rest| rest.starts_with('/'))
-                    })
-            })
-            .map(|entry| entry.path)
-            .collect())
+        tree.file_paths(&route.search_paths)
     }
 
     pub(super) fn github_repository(&self, route: &RepositoryRoute) -> Result<RepositorySnapshot> {
         let base: Commit =
             self.github_json(&route.repository, &["commits", &route.base_ref], &[])?;
-        let mut paths = self.github_paths(route, &base)?;
-        let live_sha = match &route.live_ref {
-            Some(name) if name == &route.base_ref => Some(base.sha.clone()),
+        let base_paths = self.github_paths(route, &base)?;
+        let (live_sha, live_paths) = match &route.live_ref {
+            Some(name) if name == &route.base_ref => (Some(base.sha.clone()), base_paths.clone()),
             Some(name) => {
                 let live: Commit = self.github_json(&route.repository, &["commits", name], &[])?;
-                if live.sha != base.sha {
-                    paths.extend(self.github_paths(route, &live)?);
-                }
-                Some(live.sha)
+                let paths = if live.sha == base.sha {
+                    base_paths.clone()
+                } else {
+                    self.github_paths(route, &live)?
+                };
+                (Some(live.sha), paths)
             }
-            None => None,
+            None => (None, BTreeSet::new()),
         };
         Ok(RepositorySnapshot {
             repository: route.repository.clone(),
             base_sha: base.sha,
             live_sha,
-            paths: paths.into_iter().collect(),
+            base_paths: base_paths.into_iter().collect(),
+            live_paths: live_paths.into_iter().collect(),
         })
     }
 
@@ -246,34 +255,70 @@ impl Sources {
             };
             let number = &captures[2];
             let repository = &route.repository;
-            let pull: PullRequest = self.github_json(repository, &["pulls", number], &[])?;
-            ensure!(
-                pull.changed_files <= MAX_PR_FILES,
-                "GitHub limits the listed files for this pull request"
-            );
-            let mut paths = Vec::new();
-            for page in 1..=pull.changed_files.div_ceil(100) {
-                let files: Vec<PullFile> = self.github_json(
-                    repository,
-                    &["pulls", number, "files"],
-                    &[("per_page", "100"), ("page", &page.to_string())],
-                )?;
-                paths.extend(files.into_iter().map(|file| file.filename));
+            if let Ok(pull) = self.github_pull_request(repository, number, url) {
+                evidence.push(pull);
             }
-            ensure!(
-                paths.len() == pull.changed_files,
-                "GitHub returned an incomplete pull request file list"
-            );
-            evidence.push(PullRequestEvidence {
-                url: url.clone(),
-                repository: repository.clone(),
-                title: pull.title,
-                description: pull.body.unwrap_or_default(),
-                state: pull.state,
-                merged: pull.merged,
-                paths,
-            });
         }
         Ok(evidence)
+    }
+    fn github_pull_request(
+        &self,
+        repository: &str,
+        number: &str,
+        url: &str,
+    ) -> Result<PullRequestEvidence> {
+        let pull: PullRequest = self.github_json(repository, &["pulls", number], &[])?;
+        ensure!(
+            pull.changed_files <= MAX_PR_FILES,
+            "GitHub limits the listed files for this pull request"
+        );
+        let mut paths = Vec::new();
+        for page in 1..=pull.changed_files.div_ceil(100) {
+            let files: Vec<PullFile> = self.github_json(
+                repository,
+                &["pulls", number, "files"],
+                &[("per_page", "100"), ("page", &page.to_string())],
+            )?;
+            paths.extend(files.into_iter().map(|file| file.filename));
+        }
+        ensure!(
+            paths.len() == pull.changed_files,
+            "GitHub returned an incomplete pull request file list"
+        );
+        Ok(PullRequestEvidence {
+            url: url.to_owned(),
+            repository: repository.to_owned(),
+            title: pull.title,
+            description: pull.body.unwrap_or_default(),
+            state: pull.state,
+            merged: pull.merged,
+            paths,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_regular_files_at_the_requested_revision_enter_the_catalog() -> Result<()> {
+        let tree: Tree = serde_json::from_str(
+            r#"{
+            "truncated": false,
+            "tree": [
+                { "path": "src/alerts.rs", "type": "blob", "mode": "100644" },
+                { "path": "src/symlink", "type": "blob", "mode": "120000" },
+                { "path": "src/execute", "type": "blob", "mode": "100755" },
+                { "path": "src/doc", "type": "tree", "mode": "040000" },
+                { "path": "src-old/alerts.rs", "type": "blob", "mode": "100644" }
+            ]
+        }"#,
+        )?;
+        assert_eq!(
+            tree.file_paths(&["src/".into()])?,
+            BTreeSet::from(["src/alerts.rs".into(), "src/execute".into()])
+        );
+        Ok(())
     }
 }

@@ -145,7 +145,7 @@ Create an investigation JSON file with one entry per product. Use Linear UUIDs i
 }
 ```
 
-Set `project_id` to `null` for a team’s unprojected work. Each team and project pair belongs to one product in the state file. Each repository has one configured proposal destination. Use an active backlog, unstarted, or triage proposal status before any approval. Configure `live_ref` only for a ref that tracks customer availability. Use `search_paths` to focus a large repository on relevant code. If the model cannot inspect sufficient evidence, it returns a local review finding.
+Set `project_id` to `null` for a team’s unprojected work. Each team and project pair belongs to one product in the state file. An issue with a recorded write intent keeps that product association if someone moves it to a different project. Each repository has one configured proposal destination. Use an active backlog, unstarted, or triage proposal status before any approval. Configure `live_ref` only for a ref that tracks customer availability. Use `search_paths` to focus a large repository on relevant code. If the model cannot inspect sufficient evidence, it returns a local review finding.
 
 ```sh
 cargo run -- investigate --product demo-shop --state ./ship-signal.sqlite \

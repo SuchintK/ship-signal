@@ -2,7 +2,7 @@
 
 This document preserves the ten findings from the technical review and the decisions made during the follow-up discussion. It is a handoff for separate decision sessions, not an implementation plan.
 
-The repository contains design documentation and ADRs; implementation has not started. The [product design](../01-grill-session/README.md) defines the agreed behavior. [Accepted ADRs](../03-adr/README.md) preserve architectural decisions and their rationale. Recommendations below are proposals unless explicitly marked as accepted.
+The repository implements feedback analysis and ticket investigation. This document records the decisions behind those workflows and the remaining MVP design questions. The [product design](../01-grill-session/README.md) defines the agreed behavior. [Accepted ADRs](../03-adr/README.md) preserve architectural decisions and their rationale. Recommendations below are proposals unless explicitly marked as accepted.
 
 Points 1 and 2 have been discussed and settled for MVP. Point 3 is partially settled: Rust, Rig, SQLite, and single-host deployment are accepted; detailed concurrency and recovery mechanisms remain open. Point 4's scheduling policy is settled; numerical defaults and implementation details remain open. Point 5's MVP feedback and correction policy is settled and recorded in accepted ADR-0005; additional provenance tracking was declined, and SQL, validation, capture/recovery, and CLI details remain specification work. Points 6 and 7 record the settled investigation policy and the remaining cooldown work. Points 8–10 remain open. Deferred features must not be treated as MVP requirements. No specific future implementation of those features has been approved.
 

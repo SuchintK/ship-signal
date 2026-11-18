@@ -291,13 +291,7 @@ impl Sources {
                 .issue_create
             }
         };
-        ensure!(
-            result.success,
-            "Linear did not confirm the investigation mutation"
-        );
-        result
-            .reference
-            .context("Linear returned no mutation reference")
+        result.confirmed_reference()
     }
 
     pub(super) fn linear_validate_write(&self, write: &LinearWrite) -> Result<()> {
@@ -326,6 +320,64 @@ impl Sources {
                 "proposal state must be an active intake state belonging to the destination team"
             );
         }
+        Ok(())
+    }
+}
+
+impl MutationResult {
+    fn confirmed_reference(self) -> Result<LinearReference> {
+        ensure!(
+            self.success,
+            "Linear did not confirm the investigation mutation"
+        );
+        self.reference
+            .context("Linear returned no mutation reference")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linear_proposal_and_comment_responses_keep_the_operation_reference() -> Result<()> {
+        let id = "e8ebcc31-d05f-4c13-bafc-2bd980e0ca2d";
+        let url = "https://linear.app/example/issue/EX-123";
+        let issue: Envelope<IssueCreated> = serde_json::from_value(json!({
+            "data": { "issueCreate": { "success": true, "issue": { "id": id, "url": url } } }
+        }))?;
+        let comment: Envelope<CommentCreated> = serde_json::from_value(json!({
+            "data": { "commentCreate": { "success": true, "comment": { "id": id, "url": url } } }
+        }))?;
+        assert_eq!(
+            issue.data.unwrap().issue_create.confirmed_reference()?.id,
+            id
+        );
+        assert_eq!(
+            comment
+                .data
+                .unwrap()
+                .comment_create
+                .confirmed_reference()?
+                .id,
+            id
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_mutation_cannot_confirm_a_write() -> Result<()> {
+        let response: Envelope<IssueCreated> = serde_json::from_value(json!({
+            "data": { "issueCreate": { "success": false, "issue": null } }
+        }))?;
+        assert!(
+            response
+                .data
+                .unwrap()
+                .issue_create
+                .confirmed_reference()
+                .is_err()
+        );
         Ok(())
     }
 }

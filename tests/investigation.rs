@@ -95,6 +95,8 @@ fn config() -> InvestigationConfig {
 #[derive(Default)]
 struct Services {
     reads: usize,
+    catalog_reads: usize,
+    updated_catalog: Option<Vec<Ticket>>,
     writes: Vec<LinearWrite>,
     tickets: Vec<Ticket>,
     fail_write: bool,
@@ -104,6 +106,12 @@ struct Services {
 impl InvestigationSources for Services {
     fn tickets(&mut self, _: &ProductConfig) -> Result<Vec<Ticket>> {
         self.reads += 1;
+        self.catalog_reads += 1;
+        if self.catalog_reads > 1
+            && let Some(updated) = &self.updated_catalog
+        {
+            return Ok(updated.clone());
+        }
         Ok(self.tickets.clone())
     }
 
@@ -134,7 +142,8 @@ impl InvestigationSources for Services {
             repository: route.repository.clone(),
             base_sha: "a".repeat(40),
             live_sha: Some("b".repeat(40)),
-            paths: vec!["alerts.rs".into()],
+            base_paths: vec!["alerts.rs".into()],
+            live_paths: vec!["alerts.rs".into()],
         })
     }
 
@@ -426,8 +435,16 @@ fn holds_uncertain_writes_after_restart_and_leaves_other_products_independent() 
     let mut other_findings = scoped_findings();
     for decision in &mut other_findings {
         decision.repository = Some("example/other".into());
+        for id in decision
+            .matching_ticket_ids
+            .iter_mut()
+            .chain(&mut decision.related_ticket_ids)
+        {
+            *id = "other-issue".into();
+        }
     }
     services.tickets[0].scope.team_id = "team-other".into();
+    services.tickets[0].id = "other-issue".into();
     model.findings = other_findings;
     let independent =
         workflow.investigate("other", other_id, &config(), &mut services, &mut model)?;
@@ -578,5 +595,65 @@ fn explicit_cli_reports_provisional_demand_without_provider_credentials() -> Res
     assert_eq!(result["product_id"], "shop");
     assert_eq!(result["report_id"], report_id);
     assert_eq!(result["needs_identity_review"], true);
+    Ok(())
+}
+
+#[test]
+fn skips_a_proposal_if_linear_work_changed_since_investigation() -> Result<()> {
+    let state = tempfile::NamedTempFile::new()?;
+    let mut workflow = Workflow::open(state.path())?;
+    assign_identities(&workflow, "shop")?;
+    let report_id = report(&mut workflow, "shop")?;
+    let email = email_ticket("started", "started");
+    let mut new_sms = email_ticket("planned", "unstarted");
+    new_sms.id = "issue-sms".into();
+    new_sms.description = "Existing SMS proposal covering the same behavior".into();
+    let mut services = Services {
+        tickets: vec![email.clone()],
+        updated_catalog: Some(vec![email, new_sms]),
+        ..Default::default()
+    };
+    let mut model = Model {
+        findings: scoped_findings(),
+        ..Default::default()
+    };
+
+    let result = workflow.investigate("shop", report_id, &config(), &mut services, &mut model)?;
+    assert!(matches!(
+        result.findings[0].write,
+        Some(WriteStatus::Completed { .. })
+    ));
+    assert_eq!(result.findings[1].kind, FindingKind::HumanReview);
+    assert_eq!(services.writes.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn moving_a_ticket_between_product_scopes_cannot_mix_evidence() -> Result<()> {
+    let state = tempfile::NamedTempFile::new()?;
+    let mut workflow = Workflow::open(state.path())?;
+    assign_identities(&workflow, "shop")?;
+    let own = report(&mut workflow, "shop")?;
+    let mut services = Services {
+        tickets: vec![email_ticket("started", "started")],
+        ..Default::default()
+    };
+    let mut model = Model {
+        findings: scoped_findings(),
+        ..Default::default()
+    };
+    workflow.investigate("shop", own, &config(), &mut services, &mut model)?;
+    assert_eq!(services.writes.len(), 2);
+
+    assign_identities(&workflow, "other")?;
+    let other = report(&mut workflow, "other")?;
+    services.tickets[0].scope.team_id = "team-other".into();
+    for decision in &mut model.findings {
+        decision.repository = Some("example/other".into());
+    }
+    let result = workflow.investigate("other", other, &config(), &mut services, &mut model)?;
+    assert_eq!(model.calls, 2);
+    assert_eq!(result.findings[0].kind, FindingKind::HumanReview);
+    assert_eq!(services.writes.len(), 2);
     Ok(())
 }

@@ -23,6 +23,7 @@ schemars = "1"
 reqwest = { version = "0.13", features = ["blocking", "json"] }
 regex = "1"
 uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
 mysql = { version = "28", default-features = false, features = ["minimal-rust", "native-tls", "chrono"] }
 
 [dev-dependencies]
