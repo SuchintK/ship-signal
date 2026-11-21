@@ -50,6 +50,13 @@ pub struct RepositoryRoute {
 }
 
 impl InvestigationConfig {
+    /// Validates the full configuration and returns the requested product's settings by reference.
+    ///
+    /// Validation checks all products because each Linear team and project pair must have
+    /// a single owner. It also checks that each repository sends proposals to a Linear scope
+    /// configured for its product.
+    ///
+    /// Returns an error if the configuration is invalid or the requested product is missing.
     pub fn product(&self, product_id: &str) -> Result<&ProductConfig> {
         let mut scopes = BTreeSet::new();
         let mut products = BTreeSet::new();
