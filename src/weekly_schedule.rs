@@ -1,3 +1,6 @@
+use crate::investigation::{
+    InvestigationConfig, InvestigationModel, InvestigationReport, InvestigationSources,
+};
 use crate::{Classification, Feedback, FeedbackSource, Workflow, validate_product_id};
 use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Datelike, Days, NaiveDate, Utc, Weekday};
@@ -227,6 +230,45 @@ impl WeeklyScheduler {
         cycle.status = WeeklyCycleStatus::Completed;
         cycle.report_id = Some(report.id);
         Ok(Some(cycle))
+    }
+
+    /// Investigate the latest due cycle once its analysis is saved.
+    pub fn investigate_due(
+        &self,
+        now: DateTime<Utc>,
+        config: &InvestigationConfig,
+        sources: &mut impl InvestigationSources,
+        model: &mut impl InvestigationModel,
+    ) -> Result<Option<InvestigationReport>> {
+        let report_id: Option<i64> = self
+            .workflow
+            .connection
+            .query_row(
+                "SELECT current.report_id FROM weekly_cycles AS current
+             WHERE current.product_id = ?1 AND current.status = 'completed'
+               AND current.analysis_cutoff <= ?2
+               AND NOT EXISTS (
+                   SELECT 1 FROM weekly_cycles AS newer
+                   WHERE newer.product_id = current.product_id
+                     AND newer.friday > current.friday AND newer.analysis_cutoff <= ?2
+               )
+             LIMIT 1",
+                params![self.product_id, now],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(report_id) = report_id else {
+            return Ok(None);
+        };
+        if !self
+            .workflow
+            .investigation_pending(&self.product_id, report_id)?
+        {
+            return Ok(None);
+        }
+        self.workflow
+            .investigate(&self.product_id, report_id, config, sources, model)
+            .map(Some)
     }
 
     fn due_cycle(&mut self, now: DateTime<Utc>) -> Result<Option<WeeklyCycle>> {

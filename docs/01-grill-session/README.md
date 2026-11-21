@@ -97,7 +97,7 @@ Group related requests by the underlying need while retaining differences in req
 
 ## 6. Investigating existing tickets and code
 
-Search within the configured product's Linear teams/projects, considering its existing labels. Compare the underlying request against ticket titles, descriptions, acceptance criteria, statuses, linked PRs, and relevant repository code. Similar titles alone are not proof of duplicate work, and a completed ticket alone is not proof that the requested behavior exists.
+Search the selected product’s configured Linear team and project pairs. An unprojected team scope covers that team’s unprojected issues. Consider existing labels as context, including when a relevant ticket has none. Compare the underlying request against ticket titles, descriptions, acceptance criteria, statuses, linked PRs, and relevant repository code. Similar titles alone are not proof of duplicate work, and a completed ticket alone is not proof that the requested behavior exists.
 
 | Finding | Outcome |
 | --- | --- |
@@ -108,7 +108,7 @@ Search within the configured product's Linear teams/projects, considering its ex
 
 The rejected-feature cooldown below takes precedence when matching a ticket marked "Not needed."
 
-Adding evidence must not silently expand the scope of an approved ticket. The exact rules for using labels as strict filters versus supporting context remain to be finalized.
+Qualify demand at the underlying need level and match tickets by behavior. Add evidence to planned or ongoing work through a comment so the scope and approval remain intact. Require one evidenced repository for a proposal. Use a customer-designated live ref as the source for availability evidence and route ambiguous ownership, likely bugs, and discoverability problems to local review. See [ADR-0006](../03-adr/0006-scope-demand-investigation-to-product-and-behavior.md).
 
 ## 7. Bounded implementation scope
 
@@ -235,7 +235,6 @@ Success requires at least one feature derived from genuine feedback to be approv
 The following have not been settled and must not be treated as approved choices:
 
 - Concrete initial AI provider/model names and their task-specific capability checks.
-- Exact Linear label-filter rules: strict search constraints versus contextual relevance.
 - Exact SQL view definitions, database-specific types, setup validation details, and concrete row-validation rules/diagnostics for PostgreSQL and MySQL. Invalid rows are excluded and reported while analysis continues.
 - Feedback namespace configuration and database-specific timestamp conversion/validation mechanics; consistent input capture and restart behavior for saved weekly inputs/classifications; and historical recomputation mechanics, including exact CLI syntax/report formatting and storage of corrected results. Historical reruns read current source data for the original interval, report through the CLI, and leave existing Linear tickets unchanged. Contract versioning/compatibility policy has not been selected.
 - The precise boundary used to match the "same or similar" feature for cooldown enforcement.

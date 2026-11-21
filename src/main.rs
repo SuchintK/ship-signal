@@ -1,13 +1,21 @@
+mod investigation_api;
+mod investigation_model;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args as ClapArgs, Parser, Subcommand};
 use rig_agent::prelude::*;
 use rig_core::providers::openai::OpenAI;
+use ship_signal::investigation::InvestigationConfig;
 use ship_signal::{
     AnalysisInput, Classification, Classifications, Feedback, FeedbackSource, NeedSuggestion,
     WeeklyScheduler, Workflow, mysql_source::MysqlSource, postgres_source::PostgresSource,
 };
-use std::{path::PathBuf, thread, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    thread,
+    time::Duration,
+};
 
 #[derive(Parser)]
 #[command(name = "ship-signal", about = "Analyze customer feedback")]
@@ -116,6 +124,22 @@ enum Command {
         state: PathBuf,
         #[arg(long, env = "SHIP_SIGNAL_ANALYSIS_MODEL")]
         model: String,
+        /// Enable Linear investigation with this JSON product mapping.
+        #[arg(long)]
+        investigation_config: Option<PathBuf>,
+    },
+    /// Investigate a product's saved analysis and publish eligible Linear work.
+    Investigate {
+        #[arg(long, value_parser = parse_product_id)]
+        product: String,
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        report: i64,
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long, env = "SHIP_SIGNAL_ANALYSIS_MODEL")]
+        model: String,
     },
     /// List one product's weekly cycles and saved report IDs.
     WeeklyCycles {
@@ -222,6 +246,14 @@ fn classify_feedback(
     Ok(result.classifications)
 }
 
+fn load_investigation_config(path: &Path, product: &str) -> Result<InvestigationConfig> {
+    let file = std::fs::File::open(path).context("open investigation config")?;
+    let config: InvestigationConfig =
+        serde_json::from_reader(file).context("read investigation config")?;
+    config.product(product)?;
+    Ok(config)
+}
+
 fn main() -> Result<()> {
     match Args::parse().command {
         Command::Validate { product, source } => {
@@ -252,6 +284,7 @@ fn main() -> Result<()> {
             mut source,
             state,
             model,
+            investigation_config,
         } => {
             anyhow::ensure!(
                 source.timestamps_mapped_to_utc,
@@ -259,16 +292,61 @@ fn main() -> Result<()> {
             );
             let mut scheduler = WeeklyScheduler::open(state, &product, &timezone)?;
             let runtime = tokio::runtime::Runtime::new()?;
+            let mut investigation = investigation_config
+                .map(|path| -> Result<_> {
+                    Ok((
+                        load_investigation_config(&path, &product)?,
+                        investigation_api::Sources::new()?,
+                    ))
+                })
+                .transpose()?;
+            let mut investigator = investigation_model::Model {
+                runtime: &runtime,
+                model: &model,
+            };
             loop {
-                match scheduler.tick(Utc::now(), &mut source, |feedback| {
+                let now = Utc::now();
+                match scheduler.tick(now, &mut source, |feedback| {
                     classify_feedback(&runtime, &model, feedback)
                 }) {
                     Ok(Some(cycle)) => println!("{}", serde_json::to_string(&cycle)?),
                     Ok(None) => {}
                     Err(error) => eprintln!("Weekly schedule for {product} failed: {error}"),
                 }
+                if let Some((config, sources)) = &mut investigation {
+                    match scheduler.investigate_due(now, config, sources, &mut investigator) {
+                        Ok(Some(result)) => println!("{}", serde_json::to_string(&result)?),
+                        Ok(None) => {}
+                        Err(error) => {
+                            eprintln!("Weekly investigation for {product} failed: {error}")
+                        }
+                    }
+                }
                 thread::sleep(Duration::from_secs(30));
             }
+        }
+        Command::Investigate {
+            product,
+            state,
+            report,
+            config,
+            model,
+        } => {
+            let workflow = Workflow::open(state)?;
+            let config = load_investigation_config(&config, &product)?;
+            let runtime = tokio::runtime::Runtime::new()?;
+            let mut investigator = investigation_model::Model {
+                runtime: &runtime,
+                model: &model,
+            };
+            let result = workflow.investigate(
+                &product,
+                report,
+                &config,
+                &mut investigation_api::Sources::new()?,
+                &mut investigator,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::WeeklyCycles { product, state } => println!(
             "{}",
