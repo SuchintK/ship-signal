@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ship Signal · Scope candidate Linear tickets</title>
+<style>
+:root{color-scheme:light;--ink:#18303d;--line:#d2e1e8;--accent:#116553}
+*{box-sizing:border-box}body{margin:0;color:var(--ink);background:#fff;font:17px/1.6 system-ui,sans-serif}
+header,.layout{max-width:1060px;margin:auto;padding:28px 24px}
+header{padding-bottom:10px}.layout{display:grid;grid-template-columns:185px minmax(0,1fr);gap:32px;padding-top:10px}
+h1{font-size:clamp(29px,5vw,49px);line-height:1.12;margin:.2em 0}h2{font-size:25px;line-height:1.2;margin:24px 0 8px}
+.meta,figcaption{font-size:13px;color:#4b6170;overflow-wrap:anywhere}
+nav{position:sticky;top:24px;align-self:start;border-block:1px solid var(--line);padding:8px 0}
+nav ul{margin:0;padding-left:20px}nav li{margin:6px 0;font-size:14px}
+a{color:var(--accent);text-underline-offset:3px}a:focus-visible{outline:3px solid var(--accent)}
+code{font-family:ui-monospace,monospace;font-size:.88em}pre{padding:14px;border:1px solid var(--line);border-radius:6px;background:#f4f8fa;overflow:auto}
+figure{margin:18px 0}figure pre{margin-top:5px}
+@media(max-width:720px){.layout{display:block}nav{position:static}}
+</style>
+</head>
+<body>
+<header>
+<p class="meta">Ship Signal · PR #9 · SUC-21 follow-up</p>
+<h1>Scope candidate Linear tickets</h1>
+<p>A stock-alert investigation for <code>shop</code> can receive both <code>shop</code> and <code>other</code> tickets from a source. The workflow sends the model only the tickets in <code>shop</code>’s configured scopes.</p>
+<p class="meta">Analyzed source SHA: 9cca01d9e6f430c5e74e8f84763cf3ecccc0b7d8<br>Base SHA: 4de4e406d8f6298f9f7b15efe66cd0e718237a08</p>
+</header>
+<div class="layout">
+<nav aria-label="Walkthrough contents">
+<ul>
+<li><a href="#example">Run the example</a></li>
+<li><a href="#fetch">Fetch the candidates</a></li>
+<li><a href="#filter">Apply the workflow scope</a></li>
+</ul>
+</nav>
+<main>
+<section id="example">
+<h2>Run the example</h2>
+<pre><code>cargo test --locked --test investigation \
+  updates_matching_behavior_and_creates_linked_work_for_a_distinct_variant -- --exact</code></pre>
+<p>The test uses temporary SQLite state and controlled source and model responses. Its source supplies the matching email ticket for <code>shop</code> and an <code>other-issue</code> ticket from another team. The model fixture checks that only <code>shop</code> tickets reach it. The test observes an evidence comment for the matching email scope and a separate SMS proposal.</p>
+<p class="meta"><a href="../../tests/investigation.rs">Investigation test</a></p>
+</section>
+<section id="fetch">
+<h2>Fetch the candidates</h2>
+<p><code>Sources::tickets</code> calls <code>linear_tickets</code>. The adapter requests issues for each configured team and project pair. A null project asks for issues with no project. It reads the response one page at a time and converts each issue into the workflow’s <code>Ticket</code> type.</p>
+<figure data-source="src/investigation_api/linear.rs" data-start="210" data-end="230"><figcaption>src/investigation_api/linear.rs · lines 210–230 <span>exact source excerpt</span></figcaption><pre><code>210          for scope in &amp;product.scopes {
+211              let project = match &amp;scope.project_id {
+212                  Some(id) =&gt; json!({ &quot;id&quot;: { &quot;eq&quot;: id } }),
+213                  None =&gt; json!({ &quot;null&quot;: true }),
+214              };
+215              let filter = json!({ &quot;team&quot;: { &quot;id&quot;: { &quot;eq&quot;: scope.team_id } }, &quot;project&quot;: project });
+216              let mut after = None;
+217              let mut seen = BTreeSet::new();
+218              loop {
+219                  let page = self
+220                      .linear::&lt;Issues&gt;(
+221                          &quot;issue search&quot;,
+222                          &amp;query,
+223                          json!({
+224                              &quot;after&quot;: after, &quot;filter&quot;: filter,
+225                          }),
+226                      )?
+227                      .issues;
+228                  for issue in page.nodes {
+229                      tickets.push(issue.into_ticket()?);
+230                  }</code></pre></figure>
+</section>
+<section id="filter">
+<h2>Apply the workflow scope</h2>
+<p><code>scoped_tickets</code> keeps tickets whose team and project match a configured pair for the selected product. Here the <code>other-issue</code> ticket is dropped. The workflow sorts and deduplicates the retained tickets by ID before using them as investigation evidence.</p>
+<figure data-source="src/investigation.rs" data-start="459" data-end="468"><figcaption>src/investigation.rs · lines 459–468 <span>exact source excerpt</span></figcaption><pre><code>459  fn scoped_tickets(
+460      product: &amp;ProductConfig,
+461      sources: &amp;mut impl InvestigationSources,
+462  ) -&gt; Result&lt;Vec&lt;Ticket&gt;&gt; {
+463      let mut tickets = sources.tickets(product)?;
+464      tickets.retain(|ticket| product.scopes.contains(&amp;ticket.scope));
+465      tickets.sort_by(|left, right| left.id.cmp(&amp;right.id));
+466      tickets.dedup_by(|left, right| left.id == right.id);
+467      Ok(tickets)
+468  }</code></pre></figure>
+<p>The example passed locally as part of all 45 default Rust tests. Formatting, Clippy, and walkthrough validation also passed. Live Linear calls were outside that local verification.</p>
+<p class="meta"><a href="pr-8.html#linear-tickets">Full investigation walkthrough</a> · <a href="https://github.com/SuchintK/ship-signal/pull/9">PR #9</a></p>
+</section>
+</main>
+</div>
+</body>
+</html>
