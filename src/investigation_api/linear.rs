@@ -194,6 +194,9 @@ impl Sources {
             .with_context(|| format!("Linear {operation} returned no data"))
     }
 
+    /// Fetches Linear issues for the selected product's team and project scopes.
+    /// A scope without a project fetches unprojected issues for that team.
+    /// Reads all pages, including archived issues, and converts the results to `Ticket` records.
     pub(super) fn linear_tickets(&self, product: &ProductConfig) -> Result<Vec<Ticket>> {
         let query = format!(
             "query InvestigationIssues($filter: IssueFilter!, $after: String) {{
@@ -223,12 +226,7 @@ impl Sources {
                     )?
                     .issues;
                 for issue in page.nodes {
-                    if issue.team.id == scope.team_id
-                        && issue.project.as_ref().map(|project| &project.id)
-                            == scope.project_id.as_ref()
-                    {
-                        tickets.push(issue.into_ticket()?);
-                    }
+                    tickets.push(issue.into_ticket()?);
                 }
                 if !page.page_info.has_next_page {
                     break;

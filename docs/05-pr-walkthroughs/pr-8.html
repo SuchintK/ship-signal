@@ -38,13 +38,19 @@ table{width:100%;border-collapse:collapse;font-size:15px}th,td{text-align:left;v
 <li><a href="#example">Try the example</a></li>
 <li><a href="#entry">Enter the workflow</a>
 <ul>
+<li><a href="#load-report-lock">Load the report and acquire the lock</a></li>
 <li><a href="#locking">What the locks protect</a></li>
 <li><a href="#parallel-runs">What can run in parallel</a></li>
 <li><a href="#linear-scopes">Claim the Linear search scope</a></li>
+<li><a href="#saved-investigation">Reuse or plan an investigation</a></li>
 </ul>
 </li>
 <li><a href="#assess">Investigate demand</a>
-<ul><li><a href="#outcomes">Choose an outcome</a></li></ul>
+<ul>
+<li><a href="#linear-tickets">Fetch candidate Linear issues</a></li>
+<li><a href="#investigate-need">Investigate one need</a></li>
+<li><a href="#outcomes">Choose an outcome</a></li>
+</ul>
 </li>
 <li><a href="#write">Save and send</a>
 <ul>
@@ -98,29 +104,8 @@ table{width:100%;border-collapse:collapse;font-size:15px}th,td{text-align:left;v
 347                  &amp;mut investigator,
 348              )?;
 349              println!(&quot;{}&quot;, serde_json::to_string_pretty(&amp;result)?);</code></pre></figure>
-<h3 id="locking">What the locks protect</h3>
-<p>SQLite keeps database writes consistent. Ship Signal also uses two files beside the SQLite database to give one process exclusive access to a larger operation.</p>
-<table>
-<thead><tr><th scope="col">Lock file</th><th scope="col">What it protects</th></tr></thead>
-<tbody>
-<tr><td><code>ship-signal.sqlite.weekly.lock</code></td><td>One scheduler owns the weekly cycles for this state file. It holds the lock until the scheduler exits, including while it waits for the next cycle.</td></tr>
-<tr><td><code>ship-signal.sqlite.investigation.lock</code></td><td>One investigation can check saved state, decide what to publish, and write to Linear. Scheduled and manual investigations both take this lock for the duration of the run.</td></tr>
-</tbody>
-</table>
-<p>For scheduled runs, <code>WeeklyScheduler::open</code> takes the weekly lock at startup. It stores the file handle in <code>_lock</code> so the lock lasts as long as the scheduler.</p>
-<figure data-source="src/weekly_schedule.rs" data-start="185" data-end="196"><figcaption>src/weekly_schedule.rs · lines 185–196 <span>exact source excerpt</span></figcaption><pre><code>185          let mut lock_path = state.as_ref().canonicalize()?.into_os_string();
-186          lock_path.push(&quot;.weekly.lock&quot;);
-187          let lock = OpenOptions::new()
-188              .read(true)
-189              .write(true)
-190              .create(true)
-191              .truncate(false)
-192              .open(lock_path)
-193              .context(&quot;open weekly scheduler lock&quot;)?;
-194          lock.try_lock().context(&quot;acquire weekly scheduler lock&quot;)?;
-195          Ok(Self {
-196              _lock: lock,</code></pre></figure>
-<p>Both entry points then reach <code>Workflow::investigate</code>. It loads the report, validates the product configuration, and finds the original report before taking the investigation lock. The scope claim comes next.</p>
+<h3 id="load-report-lock">Load the report and acquire the lock</h3>
+<p>Both entry points reach <code>Workflow::investigate</code>. It loads the report by product and ID, validates the product configuration, and finds the original report before taking the investigation lock. The scope claim comes next.</p>
 <figure data-source="src/investigation.rs" data-start="315" data-end="336"><figcaption>src/investigation.rs · lines 315–336 <span>exact source excerpt</span></figcaption><pre><code>315          let report = self.report(product_id, report_id)?;
 316          let product = config.product(product_id)?;
 317          let root_id = self.investigation_root(&amp;report)?;
@@ -143,6 +128,28 @@ table{width:100%;border-collapse:collapse;font-size:15px}th,td{text-align:left;v
 334              .open(lock_path)
 335              .context(&quot;open investigation lock&quot;)?;
 336          lock.try_lock().context(&quot;acquire investigation lock&quot;)?;</code></pre></figure>
+<h3 id="locking">What the locks protect</h3>
+<p>SQLite keeps database writes consistent. Ship Signal also uses two files beside the SQLite database to give one process exclusive access to a larger operation.</p>
+<table>
+<thead><tr><th scope="col">Lock file</th><th scope="col">What it protects</th></tr></thead>
+<tbody>
+<tr><td><code>ship-signal.sqlite.weekly.lock</code></td><td>One scheduler owns the weekly cycles for this state file. It holds the lock until the scheduler exits, including while it waits for the next cycle.</td></tr>
+<tr><td><code>ship-signal.sqlite.investigation.lock</code></td><td>One investigation can check saved state, decide what to publish, and write to Linear. Scheduled and manual investigations both take this lock for the duration of the run.</td></tr>
+</tbody>
+</table>
+<p>For scheduled runs, <code>WeeklyScheduler::open</code> takes the weekly lock at startup, before <code>Workflow::investigate</code> runs. It stores the file handle in <code>_lock</code> so the lock lasts as long as the scheduler.</p>
+<figure data-source="src/weekly_schedule.rs" data-start="185" data-end="196"><figcaption>src/weekly_schedule.rs · lines 185–196 <span>exact source excerpt</span></figcaption><pre><code>185          let mut lock_path = state.as_ref().canonicalize()?.into_os_string();
+186          lock_path.push(&quot;.weekly.lock&quot;);
+187          let lock = OpenOptions::new()
+188              .read(true)
+189              .write(true)
+190              .create(true)
+191              .truncate(false)
+192              .open(lock_path)
+193              .context(&quot;open weekly scheduler lock&quot;)?;
+194          lock.try_lock().context(&quot;acquire weekly scheduler lock&quot;)?;
+195          Ok(Self {
+196              _lock: lock,</code></pre></figure>
 <p>Imagine the scheduler and a manual command pick up the same report. Without the investigation lock, both could find no saved result, decide to create the same SMS ticket, and send two separate requests. SQLite could commit both local writes and Linear could still create two issues. The lock stays held through the Linear call, which happens after the intent transaction commits. A later run can see the saved result and avoid repeating the write.</p>
 <p>The separate locks let you investigate manually while the scheduler waits for the next cycle. Using one lock for both would also make the scheduler try to acquire a lock it already holds. With two locks, it takes the investigation lock only when it starts investigating. If another run already holds that lock, <code>try_lock()</code> returns an error immediately.</p>
 <p>Ship Signal resolves the database path before appending the lock suffix so relative paths and symlinks lead to the same lock file. The OS releases the lock when the file handle closes. The file itself can stay on disk between runs.</p>
@@ -181,6 +188,34 @@ table{width:100%;border-collapse:collapse;font-size:15px}th,td{text-align:left;v
  52      }
  53      tx.commit()?;
  54      Ok(())</code></pre></figure>
+<h3 id="saved-investigation">Reuse or plan an investigation</h3>
+<p>An analysis or review saves a report. Investigation has its own record, keyed by the selected product and the original report ID. <code>investigation_root</code> follows <code>reviewed_from</code> back to that original report, so every review in the chain looks up the same investigation.</p>
+<figure data-source="src/investigation.rs" data-start="341" data-end="355"><figcaption>src/investigation.rs · lines 341–355 <span>exact source excerpt</span></figcaption><pre><code>341          let mut stored = match state::load(&amp;self.connection, product_id, root_id)? {
+342              Some(stored) if !stored.needs_identity_review =&gt; {
+343                  ensure!(
+344                      report_id == root_id || report_id == stored.report_id,
+345                      &quot;this analysis already has an investigation for report {}&quot;,
+346                      stored.report_id
+347                  );
+348                  stored
+349              }
+350              _ =&gt; {
+351                  let stored = plan(&amp;self.connection, &amp;report, product, sources, model)?;
+352                  state::save(&amp;self.connection, root_id, &amp;stored)?;
+353                  stored
+354              }
+355          };</code></pre></figure>
+<p>Suppose <strong>40</strong> is the original analysis, <strong>41</strong> is the reviewed report used to plan the investigation, and <strong>42</strong> is a later review in that chain. They all have <code>root_id = 40</code>. The investigation stores <code>stored.report_id = 41</code> and has cleared identity review.</p>
+<table>
+<thead><tr><th scope="col">Report passed to <code>investigate</code></th><th scope="col">What happens</th></tr></thead>
+<tbody>
+<tr><td><code>40</code></td><td>Reuses the saved investigation because the ID matches <code>root_id</code>.</td></tr>
+<tr><td><code>41</code></td><td>Reuses the saved investigation because the ID matches <code>stored.report_id</code>.</td></tr>
+<tr><td><code>42</code></td><td>Enters the <code>Some(stored)</code> branch and exits with an error because neither ID matches.</td></tr>
+</tbody>
+</table>
+<p>The match guard checks the <em>saved investigation’s</em> review flag. Once the guard passes, a failing <code>ensure!</code> exits the function. This preserves the plan and any pending or completed Linear writes for the chain.</p>
+<p>The <code>_</code> branch calls <code>plan()</code> when the lookup finds no investigation or finds one that still needs identity review. If root 40 has only a provisional investigation, passing reviewed report 42 reaches this branch and plans from report 42.</p>
 </section>
 <section id="assess">
 <h2>Investigate demand</h2>
@@ -198,9 +233,48 @@ table{width:100%;border-collapse:collapse;font-size:15px}th,td{text-align:left;v
 399          .collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?;
 400      if demand.is_empty() {
 401          return Ok(stored);</code></pre></figure>
-<p>The workflow searches the configured Linear team and project pairs, then reads linked PR evidence and repo files at pinned commits. Labels give context, including when a matching issue is unlabeled. The model selects relevant files and proposes a finding for each variant. Rust checks the cited issues and code against the records it retrieved.</p>
+<h3 id="linear-tickets">Fetch candidate Linear issues</h3>
+<p><code>linear_tickets</code> fetches the issues Ship Signal can consider for the selected product.</p>
+<ol>
+<li><strong>Apply each configured scope.</strong> A team and project pair searches that project’s issues for that team. For <code>SUC</code> with <code>project_id: null</code>, the query asks for SUC issues with no project.</li>
+<li><strong>Read every page.</strong> The query requests up to 50 issues at a time and includes archived issues. The function follows the pagination cursor until all pages are fetched.</li>
+<li><strong>Build the candidate list.</strong> Each <code>Ticket</code> carries the issue’s title, description, status, labels, and GitHub PR links found in its description or attachments. <code>scoped_tickets</code> keeps tickets whose team and project match one of the product’s configured scopes, including unlabeled tickets.</li>
+</ol>
+<p>The investigation model sees both the actual labels on each candidate ticket and the product’s configured label names from <code>investigation.json</code>. It can use them as clues alongside the issue description, linked PRs, and code when deciding whether the requested behavior matches existing work. An unlabeled ticket can still be a match. See <a href="../../src/investigation_api/linear.rs">the Linear adapter</a>.</p>
+<h3 id="investigate-need">Investigate one need</h3>
+<p><code>investigate_need</code> runs once per qualifying need. For stock alerts, it considers Email and SMS together using the candidate tickets, linked PR evidence, and file lists for the configured repositories.</p>
+<ol>
+<li><strong>Pick code to inspect.</strong> The model selects relevant files. Rust checks the selected repository and paths, then reads the files at pinned commits.</li>
+<li><strong>Assess the evidence.</strong> The model sees the retrieved code alongside the ticket and PR evidence. It might find that Email already has a matching ticket and SMS needs a separate proposal.</li>
+<li><strong>Check coverage.</strong> Rust verifies that the assessments cover each variant exactly once. Evidence over the size limit, an unreadable selection, or incomplete coverage sends the need to human review.</li>
+<li><strong>Return findings and planned writes.</strong> Each assessment becomes a finding and can include a proposed Linear comment or issue. The caller saves the investigation before sending any writes.</li>
+</ol>
+<figure data-source="src/investigation.rs" data-start="511" data-end="523"><figcaption>src/investigation.rs · lines 511–523 <span>exact source excerpt</span></figcaption><pre><code>511      let mut findings = Vec::new();
+512      for decision in decisions {
+513          let variants = decision
+514              .variant_indices
+515              .iter()
+516              .filter_map(|&amp;index| context.demand.variants.get(index).cloned())
+517              .collect();
+518          let evidence = context.demand.clone();
+519          let finding = classify_finding(report, context, product, &amp;code, decision, variants)
+520              .unwrap_or_else(|error| (Finding::review(evidence, error.to_string()), None));
+521          findings.push(finding);
+522      }
+523      Ok(findings)</code></pre></figure>
 <h3 id="outcomes">Choose an outcome</h3>
-<p>Matching planned or ongoing work gets a comment. Distinct work can become a proposal once it has one evidenced repository, bounded behavior, and acceptance criteria. Confirmed live functionality, ambiguous matches, and multi-repository work appear in the local findings. A matching rejection is held for cooldown handling.</p>
+<p>The model returns assessments. <code>classify_finding</code> checks the evidence and turns each assessment into a <code>(Finding, Option&lt;LinearWrite&gt;)</code> pair. <code>FindingKind</code> describes what Ship Signal found. The optional write describes what to send to Linear.</p>
+<table>
+<thead><tr><th scope="col"><code>FindingKind</code></th><th scope="col">Meaning and planned write</th></tr></thead>
+<tbody>
+<tr><td><code>MatchingWork</code></td><td>One planned or ongoing ticket covers the behavior. Add an evidence comment.</td></tr>
+<tr><td><code>Proposal</code></td><td>The behavior is distinct and bounded, with one evidenced repository and acceptance criteria. Create a new issue.</td></tr>
+<tr><td><code>PossibleBug<wbr>OrDiscoverability</code></td><td>The behavior already appears in live code. Record the finding locally.</td></tr>
+<tr><td><code>RejectedWork</code></td><td>A matching ticket has a configured rejection status. Record the finding locally.</td></tr>
+<tr><td><code>HumanReview</code></td><td>The match, repository ownership, scope, or evidence is unclear. Record the finding locally.</td></tr>
+</tbody>
+</table>
+<p><code>not_needed_state_ids</code> in <code>investigation.json</code> lists the Linear status UUIDs that mean work was rejected, such as the ID of a status called “Won’t do.” The list defaults to empty. When an issue covers the same requested behavior and has one of those statuses, Ship Signal returns a <code>rejected_work</code> finding and holds the behavior for cooldown handling. It skips the Linear write for that behavior. A distinct variant can still be considered separately.</p>
 <figure data-source="src/investigation.rs" data-start="659" data-end="677"><figcaption>src/investigation.rs · lines 659–677 <span>exact source excerpt</span></figcaption><pre><code>659      let write = match decision.kind {
 660          AssessmentKind::ExistingFunctionality if cited_code.iter().any(|code| code.live) =&gt; {
 661              finding.kind = FindingKind::PossibleBugOrDiscoverability;

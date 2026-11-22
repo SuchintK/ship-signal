@@ -311,6 +311,7 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
 
 impl Workflow {
     /// Investigate a saved report using its product's configured Linear and GitHub scope.
+    /// After investigation, our report turns into an investigation.
     pub fn investigate(
         &self,
         product_id: &str,
@@ -323,6 +324,8 @@ impl Workflow {
         let product = config.product(product_id)?;
         // Find the original report ID in the review chain
         let root_id = self.investigation_root(&report)?;
+
+        // Lock the state file to prevent concurrent investigations
         let lock_path = self
             .connection
             .path()
@@ -394,6 +397,7 @@ impl Workflow {
     }
 }
 
+// product: the object that we obtained from the investigation
 fn plan(
     connection: &Connection,
     report: &Report,
@@ -416,6 +420,7 @@ fn plan(
         return Ok(stored);
     }
 
+    // Load tickets, repository and PRs for checking the need
     let tickets = scoped_tickets(product, sources)?;
     for ticket in &tickets {
         if state::foreign_issue(connection, &product.product_id, &ticket.id)? {
