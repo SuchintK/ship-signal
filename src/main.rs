@@ -246,12 +246,9 @@ fn classify_feedback(
     Ok(result.classifications)
 }
 
-fn load_investigation_config(path: &Path, product: &str) -> Result<InvestigationConfig> {
+fn load_investigation_config(path: &Path) -> Result<InvestigationConfig> {
     let file = std::fs::File::open(path).context("open investigation config")?;
-    let config: InvestigationConfig =
-        serde_json::from_reader(file).context("read investigation config")?;
-    config.product(product)?;
-    Ok(config)
+    serde_json::from_reader(file).context("read investigation config")
 }
 
 fn main() -> Result<()> {
@@ -294,10 +291,9 @@ fn main() -> Result<()> {
             let runtime = tokio::runtime::Runtime::new()?;
             let mut investigation = investigation_config
                 .map(|path| -> Result<_> {
-                    Ok((
-                        load_investigation_config(&path, &product)?,
-                        investigation_api::Sources::new()?,
-                    ))
+                    let config = load_investigation_config(&path)?;
+                    config.product(&product)?;
+                    Ok((config, investigation_api::Sources::new()?))
                 })
                 .transpose()?;
             let mut investigator = investigation_model::Model {
@@ -333,7 +329,7 @@ fn main() -> Result<()> {
             model,
         } => {
             let workflow = Workflow::open(state)?;
-            let config = load_investigation_config(&config, &product)?;
+            let config = load_investigation_config(&config)?;
             let runtime = tokio::runtime::Runtime::new()?;
             let mut investigator = investigation_model::Model {
                 runtime: &runtime,

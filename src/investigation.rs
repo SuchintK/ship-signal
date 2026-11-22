@@ -321,6 +321,7 @@ impl Workflow {
     ) -> Result<InvestigationReport> {
         let report = self.report(product_id, report_id)?;
         let product = config.product(product_id)?;
+        // Find the original report ID in the review chain
         let root_id = self.investigation_root(&report)?;
         let lock_path = self
             .connection
@@ -342,11 +343,12 @@ impl Workflow {
             .context("open investigation lock")?;
         lock.try_lock().context("acquire investigation lock")?;
 
-        if !report.products[0].needs_identity_review {
+        if !report.product.needs_identity_review {
             state::claim_scopes(&self.connection, product)?;
         }
         let mut stored = match state::load(&self.connection, product_id, root_id)? {
             Some(stored) if !stored.needs_identity_review => {
+                // Either the current report is from the first review or it's a later review of the same report.
                 ensure!(
                     report_id == root_id || report_id == stored.report_id,
                     "this analysis already has an investigation for report {}",
@@ -364,8 +366,13 @@ impl Workflow {
         Ok(stored.into_report())
     }
 
+    // investigation_root finds the original report ID in that review chain.
+    //It starts with the report you supplied and follows reviewed_from until it reaches a report with no parent.
+    // For example, in 45 → 42 → 41, it returns 41.
+    // Ship Signal uses that ID so the original report and its reviewed versions share one investigation record.
     fn investigation_root(&self, report: &Report) -> Result<i64> {
         let mut id = report.id;
+        // `review_report` records its input report here. Original analyses have no parent.
         let mut parent = report.reviewed_from;
         while let Some(parent_id) = parent {
             ensure!(parent_id < id, "invalid reviewed report lineage");
@@ -375,6 +382,7 @@ impl Workflow {
                 "reviewed report interval differs from its original"
             );
             id = previous.id;
+            // Keep following parent links until we reach the original report.
             parent = previous.reviewed_from;
         }
         Ok(id)
@@ -393,7 +401,7 @@ fn plan(
     sources: &mut impl InvestigationSources,
     model: &mut impl InvestigationModel,
 ) -> Result<state::StoredInvestigation> {
-    let analysis = &report.products[0];
+    let analysis = &report.product;
     let mut stored = state::StoredInvestigation::new(report, analysis.needs_identity_review);
     if analysis.needs_identity_review {
         return Ok(stored);
@@ -468,7 +476,7 @@ fn demand_evidence(report: &Report, need: &NeedReport) -> Result<DemandEvidence>
             .clone()
             .context("eligible need has no reviewed identity")?,
         customer_count: need.customer_count,
-        denominator: report.products[0].denominator,
+        denominator: report.product.denominator,
         percentage: need.percentage,
         variants: need.variants.clone(),
         message_indices: need.message_indices.clone(),

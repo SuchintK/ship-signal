@@ -31,6 +31,11 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+// investigation_scopes remembers which product owns each Linear team and project pair.
+// For example, if shop claims Engineering → Checkout, later investigations for shop can still search it.
+// If billing tries to claim that same pair using a different investigation.json but the same SQLite file, Ship Signal stops before searching Linear.
+// That keeps two products from investigating the same set of issues.
+// The config check catches overlaps within one JSON file. The table catches overlaps across runs and config files that use the same SQLite state.
 pub(super) fn claim_scopes(connection: &Connection, product: &ProductConfig) -> Result<()> {
     let tx = connection.unchecked_transaction()?;
     for scope in &product.scopes {

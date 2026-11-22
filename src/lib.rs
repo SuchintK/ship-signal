@@ -102,23 +102,25 @@ pub struct ProductReport {
 pub struct Report {
     pub id: i64,
     pub product_id: String,
+    /// ID of the report used as input to this review. `None` for an original analysis.
     pub reviewed_from: Option<i64>,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
     pub input: AnalysisInput,
     pub classifications: Vec<Classification>,
-    pub products: Vec<ProductReport>,
+    pub product: ProductReport,
 }
 
 // The row's primary key is the report ID; it is not duplicated in the JSON.
 #[derive(Serialize, Deserialize)]
 struct StoredReport {
+    // The JSON stores the parent report's SQLite row ID.
     reviewed_from: Option<i64>,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
     input: AnalysisInput,
     classifications: Vec<Classification>,
-    products: Vec<ProductReport>,
+    product: ProductReport,
 }
 
 impl StoredReport {
@@ -136,12 +138,13 @@ impl StoredReport {
         Report {
             id,
             product_id,
+            // The parent ID comes from the saved JSON. `id` comes from this report's row.
             reviewed_from: self.reviewed_from,
             start: self.start,
             end: self.end,
             input: self.input,
             classifications: self.classifications,
-            products: self.products,
+            product: self.product,
         }
     }
 }
@@ -282,59 +285,49 @@ impl Workflow {
         );
         // Classify the feedback
         let classifications = classify(&input.feedback)?;
+        // Direct and scheduled analyses both start a new review chain with no parent.
         self.build_report(product_id, start, end, input, classifications, None)
     }
     /// List unresolved needs from saved evidence and product-scoped confirmed identities.
     pub fn need_review_queue(&self, product_id: &str, id: i64) -> Result<Vec<NeedReviewItem>> {
         let report = self.report(product_id, id)?;
-        let aliases: Vec<_> = self
-            .need_identity_index(product_id)?
-            .into_values()
+        let aliases = self.need_identity_index(product_id)?;
+        let mut candidates: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for alias in aliases.values() {
+            candidates
+                .entry(alias.identity.clone())
+                .or_default()
+                .push(alias.need.clone());
+        }
+        let candidates: Vec<NeedCandidate> = candidates
+            .into_iter()
+            .map(|(identity, needs)| NeedCandidate { identity, needs })
             .collect();
         let mut result = Vec::new();
-        for product in &report.products {
-            let mut candidates: BTreeMap<String, Vec<String>> = BTreeMap::new();
-            for alias in aliases
+        for report_need in report.product.needs.iter().filter(|n| n.identity.is_none()) {
+            if aliases.contains_key(&report_need.need.to_lowercase()) {
+                continue;
+            }
+            let messages = report_need
+                .message_indices
                 .iter()
-                .filter(|a| a.product_id == product.product_id)
-            {
-                candidates
-                    .entry(alias.identity.clone())
-                    .or_default()
-                    .push(alias.need.clone());
-            }
-            let candidates: Vec<NeedCandidate> = candidates
-                .into_iter()
-                .map(|(identity, needs)| NeedCandidate { identity, needs })
-                .collect();
-            for report_need in product.needs.iter().filter(|n| n.identity.is_none()) {
-                if aliases.iter().any(|a| {
-                    a.product_id == product.product_id
-                        && a.need.to_lowercase() == report_need.need.to_lowercase()
-                }) {
-                    continue;
-                }
-                let messages = report_need
-                    .message_indices
-                    .iter()
-                    .map(|&i| {
-                        report
-                            .input
-                            .feedback
-                            .get(i)
-                            .map(|row| row.text.clone())
-                            .context("saved report references a missing message")
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                result.push(NeedReviewItem {
-                    product_id: product.product_id.clone(),
-                    need: report_need.need.clone(),
-                    customer_count: report_need.customer_count,
-                    messages,
-                    variants: report_need.variants.clone(),
-                    candidates: candidates.clone(),
-                });
-            }
+                .map(|&i| {
+                    report
+                        .input
+                        .feedback
+                        .get(i)
+                        .map(|row| row.text.clone())
+                        .context("saved report references a missing message")
+                })
+                .collect::<Result<Vec<_>>>()?;
+            result.push(NeedReviewItem {
+                product_id: report.product_id.clone(),
+                need: report_need.need.clone(),
+                customer_count: report_need.customer_count,
+                messages,
+                variants: report_need.variants.clone(),
+                candidates: candidates.clone(),
+            });
         }
         Ok(result)
     }
@@ -347,7 +340,7 @@ impl Workflow {
             previous.end,
             previous.input,
             previous.classifications,
-            Some(id),
+            Some(id), // The report being reviewed becomes the new report's immediate parent.
         )?
         .save(&self.connection, product_id)
     }
@@ -442,19 +435,19 @@ impl Workflow {
                 }
             })
             .collect();
-        let products = vec![ProductReport {
-            product_id: product_id.to_owned(),
-            denominator,
-            needs_identity_review,
-            needs,
-        }];
         Ok(StoredReport {
+            // Save the parent link alongside the recalculated demand.
             reviewed_from,
             start,
             end,
             input,
             classifications,
-            products,
+            product: ProductReport {
+                product_id: product_id.to_owned(),
+                denominator,
+                needs_identity_review,
+                needs,
+            },
         })
     }
     pub fn report(&self, product_id: &str, id: i64) -> Result<Report> {
@@ -474,8 +467,7 @@ impl Workflow {
                 .feedback
                 .iter()
                 .all(|row| row.product_id == product_id)
-                && report.products.len() == 1
-                && report.products[0].product_id == product_id,
+                && report.product.product_id == product_id,
             "saved report data does not match its product scope"
         );
         Ok(report.into_report(id, stored_product))
