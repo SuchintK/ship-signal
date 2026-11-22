@@ -218,10 +218,10 @@ impl Workflow {
             "Saved reviewed report {} (from {}).",
             reviewed.id, id
         )?;
-        if reviewed.products.iter().any(|p| p.needs_identity_review) {
+        if reviewed.product.needs_identity_review {
             writeln!(
                 output,
-                "Some needs remain unresolved; demand is provisional for those products."
+                "Some needs remain unresolved. Demand is provisional for this product."
             )?;
         }
         Ok(Some(reviewed))

@@ -6,13 +6,13 @@ Ship Signal turns recurring customer feature requests into evidence-backed Linea
 
 ## Project status
 
-The analysis workflow supports explicit intervals and scheduled weekly runs for a chosen product against a PostgreSQL or MySQL feedback view. Ticket investigation, approval, and implementation remain future work.
+The analysis workflow supports explicit intervals and scheduled weekly runs for a chosen product against a PostgreSQL or MySQL feedback view. Configured investigation proposes bounded Linear work from saved reports. Approval and implementation remain future work.
 
 ## Planned capabilities
 
 - PostgreSQL and MySQL feedback integrations through a uniform read-only schema.
 - Weekly analysis of explicit customer feature requests.
-- Linear ticket investigation, evidence collection, and approval checks.
+- Linear evidence comments and bounded proposals. Approval checks are planned.
 - Customer-hosted weekend implementation with human-reviewed draft PRs.
 - Rust & Rig orchestration and configurable models for analysis and implementation.
 
@@ -98,7 +98,7 @@ cargo run -- validate --product demo-shop --timestamps-mapped-to-utc
 
 Every command requires a nonblank `--product`. A shared view and SQLite file may contain multiple products, but each invocation operates on only the supplied product. The feedback database filters by product before Ship Signal captures messages, validates rows, or calls the classifier. Diagnostics cover only matching rows; rows with a different or NULL product ID are outside this read. Product IDs are exact, case-sensitive opaque strings. Run separate analyses for separate products.
 
-Saved reports retain their product even when there is no feedback: an empty analysis contains one product result with a zero denominator and no needs. `report`, `review-report`, and `review-needs` require both the product and a report ID owned by that product; a mismatch fails before a model request or review decision. `need-identities` lists only the supplied product's mappings. `validate` checks the shared view's schema and timestamp-mapping confirmation; it does not check whether that product has rows. An absent product is valid and an analysis saves an empty result.
+Saved reports and CLI report output include a single `product` object. An empty analysis still saves that object with a zero denominator and no needs. `report`, `review-report`, and `review-needs` require both the product and a report ID owned by that product; a mismatch fails before a model request or review decision. `need-identities` lists only the supplied product's mappings. `validate` checks the shared view's schema and timestamp-mapping confirmation; it does not check whether that product has rows. An absent product is valid and an analysis saves an empty result.
 
 The interval is start-inclusive and end-exclusive. Cutoffs exclude leap seconds. MySQL query cutoffs must fall within UTC years 1000 through 9999. Only message indices and text from the selected product are sent to the configured OpenAI model for classification; feedback text may itself contain personal information. The model must support Rig structured output and should be qualified against representative feedback before production use. Each completed report includes copied inputs, classifications, supporting message indices, variants, counts, percentages, and invalid-row diagnostics. Null submission times and malformed MySQL calendar dates for the selected product cannot be assigned to an interval, so they are reported as invalid on every read for that product. Duplicate message identities within a capture are excluded as ambiguous. Identified customers are counted once per product and need, across sources; unidentified feedback remains evidence but does not enter the denominator.
 
@@ -119,6 +119,46 @@ Restart with the same product and state file to resume. If several Fridays passe
 To change the timezone, restart with the new `--timezone`. The change applies to the first Friday whose cutoff is still ahead in both zones. Due cycles retain their assigned timezone and UTC deadlines. The transition week's interval starts at the previous cycle's saved Friday cutoff. If there is no previous cycle yet, both cutoffs of the first feedback interval use its assigned timezone.
 
 One scheduler can hold the SQLite state's adjacent `.weekly.lock` file at a time. Keep that file in place while the scheduler runs. Report commands can still read the state. For concurrent schedulers serving different products, use separate state files. To restore, stop the scheduler, restore the SQLite backup on persistent local storage, and restart against that file with the original product configuration.
+
+### Investigate demand and propose Linear work
+
+Set `LINEAR_API_KEY` with access to read the configured teams and post issues and comments. Set `GITHUB_TOKEN` with read access to repository contents and pull requests, and configure the analysis model as above. Investigation sends the model need summaries, requested variants, counts, in-scope ticket and PR details, repository paths, and selected code. Linear receives the resulting proposal or comment and pointers to supporting messages. Open the referenced saved report to see those messages.
+
+Create an investigation JSON file with one entry per product. Use Linear UUIDs in place of the placeholders.
+
+```json
+{
+  "products": [{
+    "product_id": "demo-shop",
+    "scopes": [{"team_id": "TEAM_UUID", "project_id": "PROJECT_UUID"}],
+    "labels": ["feature request"],
+    "not_needed_state_ids": ["REJECTED_STATE_UUID"],
+    "repositories": [{
+      "repository": "example/shop",
+      "base_ref": "main",
+      "live_ref": "production",
+      "search_paths": ["src/", "tests/"],
+      "destination": {"team_id": "TEAM_UUID", "project_id": "PROJECT_UUID"},
+      "proposal_state_id": "BACKLOG_STATE_UUID"
+    }]
+  }]
+}
+```
+
+Set `project_id` to `null` for a team’s unprojected work. Each team and project pair belongs to one product in the state file. An issue with a recorded write intent keeps that product association if someone moves it to a different project. Each repository has one configured proposal destination. Use an active backlog, unstarted, or triage proposal status before any approval. Configure `live_ref` only for a ref that tracks customer availability. Use `search_paths` to focus a large repository on relevant code. If the model cannot inspect sufficient evidence, it returns a local review finding.
+
+```sh
+cargo run -- investigate --product demo-shop --state ./ship-signal.sqlite \
+  --report 1 --config ./investigation.json
+
+cargo run -- schedule --product demo-shop --timezone America/New_York \
+  --state ./ship-signal.sqlite --timestamps-mapped-to-utc \
+  --investigation-config ./investigation.json
+```
+
+If investigation reports `needs_identity_review`, run `review-needs` and pass the ID of the fully reviewed report to `investigate`. A later invocation for the same analysis returns the saved investigation and resumes pending writes. Inspect `findings` for report message indices, ticket and code links, and any local review reasons. A request about confirmed live behavior may indicate a bug or a discoverability problem.
+
+An `uncertain` write includes a Linear operation UUID. Check Linear for that UUID and review the saved finding before taking further action. Ship Signal holds additional writes for that product while the uncertain operation remains recorded. Automated reconciliation and the rejection cooldown are follow-up work.
 
 ### Classification response format
 
@@ -142,7 +182,7 @@ cargo run -- review-needs --product demo-shop --state ./ship-signal.sqlite --rep
 
 Suggestions are never saved as mappings without a person choosing an action. Confirmed mappings and deferrals are saved as they are made; quit with `q` and run the same command to resume. Add `--include-deferred` to revisit needs previously left unresolved for that report. Once the queue has been reviewed, the command saves a separate report from the original feedback and classifications. The original report is unchanged. Deferred needs remain unresolved. For match suggestions the model receives the product ID, need text, candidate IDs and their mapped needs, supporting feedback text, variants, and the distinct-customer count. Feedback may contain personal information. Choose and qualify the model for the task before production use.
 
-The working identity policy is an implementation choice, not an accepted architectural decision. Each stable ID identifies an underlying need within one product. Direct mappings are also available:
+Each stable ID identifies an underlying need within one product. Investigation compares concrete behavior with ticket scope. See [ADR-0006](docs/03-adr/0006-scope-demand-investigation-to-product-and-behavior.md). Direct mappings are also available:
 
 ```sh
 cargo run -- map-need --state ./ship-signal.sqlite --product demo-shop --need 'CSV export' --identity export-data

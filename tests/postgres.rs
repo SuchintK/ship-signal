@@ -79,8 +79,9 @@ fn workflow_saves_a_report_from_real_postgresql() -> anyhow::Result<()> {
                 .collect())
         },
     )?;
-    assert_eq!(report.products[0].denominator, 3);
-    let export = report.products[0]
+    assert_eq!(report.product.denominator, 3);
+    let export = report
+        .product
         .needs
         .iter()
         .find(|need| need.need == "export")

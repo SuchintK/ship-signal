@@ -335,7 +335,7 @@ fn failure_retries_original_cycle_and_completion_survives_restart() -> anyhow::R
     assert_eq!(completed.analysis_cutoff, cutoff);
     assert_eq!(completed.approval_cutoff, utc("2026-11-14T09:00:00Z"));
     let report = workflow.report("shop", completed.report_id.unwrap())?;
-    assert_eq!(report.products[0].denominator, 1);
+    assert_eq!(report.product.denominator, 1);
     drop(scheduler);
 
     let mut scheduler = WeeklyScheduler::open(&state, "shop", "UTC")?;

@@ -9,3 +9,4 @@ ADRs preserve the rationale and trade-offs behind consequential architecture dec
 | 0003 | Use SQLite for single-host MVP application state | Accepted | 2026-10-17 | [ADR-0003](0003-use-sqlite-for-single-host-mvp-state.md) |
 | 0004 | Distinguish scheduled execution, recovery, retries, and manual execution | Accepted | 2026-10-19 | [ADR-0004](0004-distinguish-scheduled-recovery-retries-and-manual-execution.md) |
 | 0005 | Preserve weekly feedback evidence and require explicit historical corrections | Accepted | 2026-10-20 | [ADR-0005](0005-preserve-weekly-feedback-evidence-and-require-explicit-historical-corrections.md) |
+| 0006 | Scope demand investigation to product and behavior | Accepted | 2026-11-19 | [ADR-0006](0006-scope-demand-investigation-to-product-and-behavior.md) |
