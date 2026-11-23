@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ship Signal · Reconsider rejected work</title>
+<style>
+:root{color-scheme:light;--ink:#18303d;--muted:#4b6170;--line:#d2e1e8;--accent:#116553}
+*{box-sizing:border-box}body{margin:0;color:var(--ink);background:#fff;font:17px/1.6 system-ui,sans-serif}
+header,.layout{max-width:1100px;margin:auto;padding:28px 24px}.layout{display:grid;grid-template-columns:190px minmax(0,1fr);gap:34px;padding-top:4px}
+header{padding-bottom:14px}h1{font-size:clamp(32px,5vw,52px);line-height:1.12;margin:.15em 0}h2{font-size:26px;line-height:1.2;margin:26px 0 8px}
+.meta,figcaption{font-size:13px;color:var(--muted);overflow-wrap:anywhere}header p{max-width:54em}
+nav{position:sticky;top:24px;align-self:start;border-block:1px solid var(--line);padding:8px 0}
+nav ul{margin:0;padding-left:21px}nav li{margin:7px 0;font-size:14px}section{scroll-margin-top:24px;margin-bottom:38px}
+a{color:var(--accent);text-underline-offset:3px}a:focus-visible{outline:3px solid var(--accent)}
+code{font-family:ui-monospace,monospace;font-size:.88em}pre{padding:14px;border:1px solid var(--line);border-radius:8px;background:#f4f8fa;overflow:auto}
+figure{margin:18px 0}figure pre{margin-top:5px}table{width:100%;border-collapse:collapse;font-size:15px}th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}th{background:#f4f8fa}
+@media(max-width:740px){.layout{display:block}nav{position:static}header,.layout{padding-inline:17px}}
+</style>
+</head>
+<body>
+<header>
+<p class="meta">Ship Signal · PR #10 · SUC-22</p>
+<h1>Reconsider rejected work</h1>
+<p>An email-only rejection sends a combined email-and-SMS proposal to human review. An equivalent email proposal waits out the 90-day cooldown and can return in a new ticket if the current week qualifies.</p>
+<p class="meta">Analyzed source SHA: 77fad4b871d00751138fd862a4d1b544a520c236<br>Base SHA: a10a672133fb2955be0dee4edffeccbbde7d142c</p>
+</header>
+<div class="layout">
+<nav aria-label="Walkthrough contents">
+<ul>
+<li><a href="#example">Run the example</a></li>
+<li><a href="#scope">Compare the behavior</a></li>
+<li><a href="#time">Check expiry and weekly demand</a></li>
+<li><a href="#delivery">Create and recheck the new ticket</a></li>
+</ul>
+</nav>
+<main>
+<section id="example">
+<h2>Run the example</h2>
+<p>Run these regression tests from the repository. Each uses a temporary SQLite file, scripted Linear data, and controlled model assessments.</p>
+<pre><code>cargo test --locked --test investigation \
+  combined_work_goes_to_review_for_partial_overlap_even_after_expiry -- --exact
+cargo test --locked --test investigation \
+  expiry_requires_a_current_week_and_creates_one_new_linked_ticket -- --exact</code></pre>
+<table>
+<thead><tr><th>Test input</th><th>Observed outcome</th></tr></thead>
+<tbody>
+<tr><td>An email-only rejection and a proposal for both channels. The test runs before and after expiry.</td><td>The finding is <code>human_review</code> in both runs. It shows the old issue link and creates no Linear write.</td></tr>
+<tr><td>An email-only proposal at the exact expiry instant. The weekly report closes at that instant with 2 of 4 customers requesting stock alerts.</td><td>The finding is <code>proposal</code>. The source double receives one create with a new UUID, a prior rejection link and reason, and an intake status for fresh approval.</td></tr>
+</tbody>
+</table>
+<p class="meta">Both outcomes were checked by the <a href="../../tests/investigation.rs">investigation tests</a>. The tests exercise the workflow with fixtures. Provider judgment and Linear delivery in an installation are separate verification steps.</p>
+</section>
+<section id="scope">
+<h2>Compare the behavior</h2>
+<p>The <code>investigate</code> command and weekly scheduler call <code>Workflow::investigate</code>. The workflow loads the saved report, selects the product's Linear scopes, and passes in-scope tickets and requested variants to the model. The report counts demand for stock alerts across variants. The model then compares the concrete proposal with each relevant Not needed issue.</p>
+<p>A coverage value of <code>partial</code> means the proposal includes both rejected and distinct behavior. Rust returns a review finding as soon as it sees this result. A disjoint SMS-only proposal follows ordinary investigation.</p>
+<figure data-source="src/investigation/rejection.rs" data-start="132" data-end="144"><figcaption>src/investigation/rejection.rs · lines 132–144 <span>exact source excerpt</span></figcaption><pre><code>132      if partial {
+133          return Ok(Outcome::Review(
+134              &quot;The proposal combines rejected behavior with other behavior. Review its scope.&quot;.into(),
+135          ));
+136      }
+137      if uncertain {
+138          return Ok(Outcome::Review(
+139              &quot;The overlap with rejected work needs review.&quot;.into(),
+140          ));
+141      }
+142      if full.is_empty() {
+143          return Ok(Outcome::Proceed(None));
+144      }</code></pre></figure>
+<p class="meta"><a href="../../src/investigation.rs">Workflow entry point</a> · <a href="../../src/investigation_model.rs">Model instructions</a></p>
+</section>
+<section id="time">
+<h2>Check expiry and weekly demand</h2>
+<p>For a full match, read the transition into the configured rejection states from Linear history. In the expiry test, a decision at 09:00 UTC on August 15 expires at 09:00 UTC on November 13. A run one second before expiry is suppressed. At expiry, the test report qualifies with 50% demand. A report that closed before expiry cannot revive the request later.</p>
+<figure data-source="src/investigation/rejection.rs" data-start="77" data-end="88"><figcaption>src/investigation/rejection.rs · lines 77–88 <span>exact source excerpt</span></figcaption><pre><code> 77      pub fn qualifies_at(self, now: DateTime&lt;Utc&gt;, expiry: DateTime&lt;Utc&gt;) -&gt; bool {
+ 78          expiry &lt;= self.end &amp;&amp; self.end &lt;= now &amp;&amp; self.next_cutoff.is_some_and(|cutoff| now &lt; cutoff)
+ 79      }
+ 80  }
+ 81
+ 82  impl RejectionDecision {
+ 83      pub(super) fn expiry(&amp;self, now: DateTime&lt;Utc&gt;) -&gt; Option&lt;DateTime&lt;Utc&gt;&gt; {
+ 84          if self.decided_at &gt; now {
+ 85              return None;
+ 86          }
+ 87          self.decided_at.checked_add_signed(TimeDelta::days(90))
+ 88      }</code></pre></figure>
+<p><code>next_cutoff</code> sets the end of the report's eligibility. Scheduled reports use the next scheduled cutoff, including weeks shortened or lengthened by daylight saving. The standalone path gives a seven-day UTC report seven days of eligibility after it closes.</p>
+<p class="meta"><a href="../../src/investigation_api/linear.rs">Linear decision and reason reads</a> · <a href="../07-rust-concepts/04-option-and-validation.html#option">Rust Option lesson</a></p>
+</section>
+<section id="delivery">
+<h2>Create and recheck the new ticket</h2>
+<p>Once ordinary investigation confirms the work is still eligible, the workflow appends the prior Linear issue link and the decision author's marked reason to the new proposal. The evidence section points to the saved report. The intended write gets a fresh UUID and the configured intake status.</p>
+<figure data-source="src/investigation.rs" data-start="774" data-end="787"><figcaption>src/investigation.rs · lines 774–787 <span>exact source excerpt</span></figcaption><pre><code>774                  body.push_str(&amp;format!(
+775                      &quot;\n\n## Prior rejection\n\n{}\n\nDecision recorded at {}. This proposal requires fresh approval.\n\n{}&quot;,
+776                      ticket.url,
+777                      previous.decided_at.to_rfc3339(),
+778                      bullets(&amp;reason.text.lines().map(str::to_owned).collect::&lt;Vec&lt;_&gt;&gt;(), &quot;&gt; &quot;),
+779                  ));
+780              }
+781              Some(LinearWrite::Create {
+782                  operation_id: uuid::Uuid::new_v4().to_string(),
+783                  destination: route.destination.clone(),
+784                  proposal_state_id: route.proposal_state_id.clone(),
+785                  title: proposal.title,
+786                  body,
+787              })</code></pre></figure>
+<p>SQLite saves the finding, its rejection evidence, and the write intent. On resume, the workflow compares the saved transition and reason with Linear and checks the weekly cutoff again. Changes send the pending item to review. Immediately before a write, SQLite records the intent as uncertain. If the response is lost, the saved UUID and uncertain status support reconciliation and hold further writes for that product.</p>
+<p class="meta"><a href="../../src/investigation/state.rs">Write revalidation and state transitions</a> · <a href="../06-database-design/database-design.html#tables">SQLite storage and examples</a></p>
+</section>
+</main>
+</div>
+</body>
+</html>
