@@ -1,10 +1,12 @@
 use super::Sources;
 use anyhow::{Context, Result, ensure};
+use chrono::{DateTime, Utc};
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use ship_signal::investigation::{
-    LinearReference, LinearScope, LinearWrite, ProductConfig, Ticket,
+    LinearReference, LinearScope, LinearWrite, ProductConfig, RejectionDecision, RejectionReason,
+    Ticket,
 };
 use std::collections::BTreeSet;
 
@@ -38,6 +40,51 @@ struct Page<T> {
 struct PageInfo {
     has_next_page: bool,
     end_cursor: Option<String>,
+}
+
+impl PageInfo {
+    fn next(self, seen: &mut BTreeSet<String>) -> Result<Option<String>> {
+        if !self.has_next_page {
+            return Ok(None);
+        }
+        let cursor = self
+            .end_cursor
+            .context("Linear omitted a pagination cursor")?;
+        ensure!(
+            seen.insert(cursor.clone()),
+            "Linear repeated a pagination cursor"
+        );
+        Ok(Some(cursor))
+    }
+}
+
+#[derive(Deserialize)]
+struct IssueActivity<T> {
+    issue: Activity<T>,
+}
+
+#[derive(Deserialize)]
+struct Activity<T> {
+    activity: Page<T>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StatusHistory {
+    id: String,
+    created_at: DateTime<Utc>,
+    actor_id: Option<String>,
+    from_state_id: Option<String>,
+    to_state_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IssueComment {
+    id: String,
+    created_at: DateTime<Utc>,
+    user: Option<Id>,
+    body: String,
 }
 
 #[derive(Deserialize)]
@@ -162,6 +209,67 @@ impl Issue {
     }
 }
 
+fn rejection_decision(
+    ticket: &Ticket,
+    rejection_states: &[String],
+    history: Vec<StatusHistory>,
+) -> Option<RejectionDecision> {
+    if !rejection_states.contains(&ticket.state_id) {
+        return None;
+    }
+    let mut expected_state = ticket.state_id.clone();
+    for change in history {
+        match (&change.from_state_id, &change.to_state_id) {
+            (None, None) => continue,
+            (Some(from), Some(to)) if *to == expected_state && from != to => {
+                if !rejection_states.contains(from) {
+                    return Some(RejectionDecision {
+                        ticket_id: ticket.id.clone(),
+                        history_id: change.id,
+                        decided_at: change.created_at,
+                        actor_id: change.actor_id,
+                    });
+                }
+                expected_state = from.clone();
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn rejection_reason(
+    decision: &RejectionDecision,
+    comments: Vec<IssueComment>,
+) -> Option<RejectionReason> {
+    let actor_id = decision.actor_id.as_ref()?;
+    let mut reason: Option<RejectionReason> = None;
+    for comment in comments {
+        if comment.created_at <= decision.decided_at
+            || comment
+                .user
+                .as_ref()
+                .is_none_or(|user| &user.id != actor_id)
+        {
+            continue;
+        }
+        let Some(text) = comment.body.trim_start().strip_prefix("Rejection reason:") else {
+            continue;
+        };
+        let text = text.trim();
+        if text.is_empty() || reason.as_ref().is_some_and(|reason| reason.text != text) {
+            return None;
+        }
+        if reason.is_none() {
+            reason = Some(RejectionReason {
+                comment_id: comment.id,
+                text: text.into(),
+            });
+        }
+    }
+    reason
+}
+
 impl Sources {
     fn linear<T: DeserializeOwned>(
         &self,
@@ -228,18 +336,10 @@ impl Sources {
                 for issue in page.nodes {
                     tickets.push(issue.into_ticket()?);
                 }
-                if !page.page_info.has_next_page {
+                after = page.page_info.next(&mut seen)?;
+                if after.is_none() {
                     break;
                 }
-                let next = page
-                    .page_info
-                    .end_cursor
-                    .context("Linear omitted an issue search cursor")?;
-                ensure!(
-                    seen.insert(next.clone()),
-                    "Linear repeated an issue search cursor"
-                );
-                after = Some(next);
             }
         }
         Ok(tickets)
@@ -252,6 +352,70 @@ impl Sources {
         self.linear::<SingleIssue>("issue lookup", &query, json!({ "id": id }))?
             .issue
             .into_ticket()
+    }
+
+    fn issue_activity<T: DeserializeOwned>(
+        &self,
+        issue_id: &str,
+        field: &str,
+        fields: &str,
+    ) -> Result<Vec<T>> {
+        let query = format!(
+            "query InvestigationActivity($id: String!, $after: String) {{
+                issue(id: $id) {{
+                    activity: {field}(first: 50, after: $after, orderBy: createdAt) {{
+                        nodes {{ {fields} }}
+                        pageInfo {{ hasNextPage endCursor }}
+                    }}
+                }}
+            }}"
+        );
+        let mut items = Vec::new();
+        let mut after = None;
+        let mut seen = BTreeSet::new();
+        loop {
+            let page = self
+                .linear::<IssueActivity<T>>(
+                    field,
+                    &query,
+                    json!({ "id": issue_id, "after": after }),
+                )?
+                .issue
+                .activity;
+            items.extend(page.nodes);
+            after = page.page_info.next(&mut seen)?;
+            if after.is_none() {
+                return Ok(items);
+            }
+        }
+    }
+
+    pub(super) fn linear_rejection_decision(
+        &self,
+        ticket: &Ticket,
+        rejection_states: &[String],
+    ) -> Result<Option<RejectionDecision>> {
+        let history = self.issue_activity(
+            &ticket.id,
+            "history",
+            "id createdAt actorId fromStateId toStateId",
+        )?;
+        Ok(rejection_decision(ticket, rejection_states, history))
+    }
+
+    pub(super) fn linear_rejection_reason(
+        &self,
+        decision: &RejectionDecision,
+    ) -> Result<Option<RejectionReason>> {
+        if decision.actor_id.is_none() {
+            return Ok(None);
+        }
+        let comments = self.issue_activity(
+            &decision.ticket_id,
+            "comments",
+            "id body createdAt user { id }",
+        )?;
+        Ok(rejection_reason(decision, comments))
     }
 
     pub(super) fn linear_write(&self, write: &LinearWrite) -> Result<LinearReference> {
@@ -336,6 +500,121 @@ impl MutationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_uses_the_latest_entry_into_the_rejected_states() -> Result<()> {
+        let ticket = serde_json::from_value::<Ticket>(json!({
+            "id": "email",
+            "url": "https://linear.app/example/issue/EX-123",
+            "scope": { "team_id": "team" },
+            "title": "Email alert",
+            "description": "Send email",
+            "state_id": "archived-rejection",
+            "state_name": "Won't do",
+            "state_type": "canceled",
+            "archived": true,
+            "labels": [],
+            "pull_request_urls": []
+        }))?;
+        let states = ["rejected".into(), "archived-rejection".into()];
+        let history = |id, created_at, from, to| {
+            serde_json::from_value::<StatusHistory>(json!({
+                "id": id,
+                "createdAt": created_at,
+                "actorId": "reviewer",
+                "fromStateId": from,
+                "toStateId": to
+            }))
+        };
+        let changes = vec![
+            history("edit", "2026-09-03T10:00:00Z", None, None)?,
+            history(
+                "move",
+                "2026-09-02T10:00:00Z",
+                Some("rejected"),
+                Some("archived-rejection"),
+            )?,
+            history(
+                "reject",
+                "2026-09-01T10:00:00Z",
+                Some("planned"),
+                Some("rejected"),
+            )?,
+            history(
+                "reopen",
+                "2026-08-31T10:00:00Z",
+                Some("rejected"),
+                Some("planned"),
+            )?,
+        ];
+        let decision = rejection_decision(&ticket, &states, changes).unwrap();
+        assert_eq!(decision.history_id, "reject");
+        assert_eq!(
+            decision.decided_at,
+            "2026-09-01T10:00:00Z".parse::<DateTime<Utc>>()?
+        );
+
+        let changes = vec![history(
+            "mismatch",
+            "2026-09-02T10:00:00Z",
+            Some("planned"),
+            Some("rejected"),
+        )?];
+        assert!(rejection_decision(&ticket, &states, changes).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn reason_requires_a_marked_comment_from_the_decision_author() -> Result<()> {
+        let decision = RejectionDecision {
+            ticket_id: "email".into(),
+            history_id: "reject".into(),
+            decided_at: "2026-09-01T10:00:00Z".parse()?,
+            actor_id: Some("reviewer".into()),
+        };
+        let comment = |id, created_at, user, body| {
+            serde_json::from_value::<IssueComment>(json!({
+                "id": id,
+                "createdAt": created_at,
+                "user": { "id": user },
+                "body": body
+            }))
+        };
+        let before = comment(
+            "before",
+            "2026-09-01T09:59:59Z",
+            "reviewer",
+            "Rejection reason: Old reason",
+        )?;
+        let wrong_user = comment(
+            "other",
+            "2026-09-01T10:00:01Z",
+            "someone-else",
+            "Rejection reason: Unrelated",
+        )?;
+        let correct = || {
+            comment(
+                "reason",
+                "2026-09-01T10:00:01Z",
+                "reviewer",
+                "Rejection reason: Wait for inventory.",
+            )
+        };
+        assert_eq!(
+            rejection_reason(&decision, vec![before, wrong_user, correct()?])
+                .unwrap()
+                .text,
+            "Wait for inventory."
+        );
+        let conflicting = comment(
+            "conflict",
+            "2026-09-01T10:00:02Z",
+            "reviewer",
+            "Rejection reason: Different reason",
+        )?;
+        assert!(rejection_reason(&decision, vec![correct()?, conflicting]).is_none());
+        Ok(())
+    }
 
     #[test]
     fn linear_proposal_and_comment_responses_keep_the_operation_reference() -> Result<()> {

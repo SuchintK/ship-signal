@@ -5,7 +5,8 @@ use anyhow::{Context, Result};
 use reqwest::blocking::Client;
 use ship_signal::investigation::{
     CodeEvidence, CodeSelection, InvestigationSources, LinearReference, LinearWrite, ProductConfig,
-    PullRequestEvidence, RepositoryRoute, RepositorySnapshot, Ticket,
+    PullRequestEvidence, RejectionDecision, RejectionReason, RepositoryRoute, RepositorySnapshot,
+    Ticket,
 };
 use std::time::Duration;
 
@@ -32,6 +33,21 @@ impl InvestigationSources for Sources {
 
     fn ticket(&mut self, id: &str) -> Result<Ticket> {
         self.linear_ticket(id)
+    }
+
+    fn rejection_decision(
+        &mut self,
+        ticket: &Ticket,
+        rejection_states: &[String],
+    ) -> Result<Option<RejectionDecision>> {
+        self.linear_rejection_decision(ticket, rejection_states)
+    }
+
+    fn rejection_reason(
+        &mut self,
+        decision: &RejectionDecision,
+    ) -> Result<Option<RejectionReason>> {
+        self.linear_rejection_reason(decision)
     }
 
     fn pull_requests(

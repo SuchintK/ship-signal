@@ -1,13 +1,13 @@
 use super::{
-    DemandEvidence, InvestigationSources, LinearReference, LinearWrite, ProductConfig, Ticket,
-    scoped_tickets,
+    DemandEvidence, InvestigationSources, LinearReference, LinearWrite, ProductConfig,
+    RejectionEvidence, Ticket, WeeklyEvidence, scoped_tickets,
 };
 use crate::Report;
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn initialize(connection: &Connection) -> Result<()> {
     connection.execute_batch(
@@ -78,6 +78,8 @@ pub struct Finding {
     pub code: Vec<String>,
     pub write: Option<WriteStatus>,
     pub operation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection: Option<RejectionEvidence>,
 }
 
 impl Finding {
@@ -92,6 +94,7 @@ impl Finding {
             code: Vec::new(),
             write: None,
             operation_id: None,
+            rejection: None,
         }
     }
 }
@@ -121,20 +124,32 @@ struct Entry {
 }
 
 #[derive(Serialize, Deserialize)]
+struct RejectionCatalog {
+    state_ids: BTreeSet<String>,
+    tickets: BTreeMap<String, String>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub(super) struct StoredInvestigation {
     product_id: String,
     pub report_id: i64,
     pub needs_identity_review: bool,
     ticket_catalog: BTreeMap<String, String>,
+    #[serde(default)]
+    rejection_catalog: Option<RejectionCatalog>,
     entries: Vec<Entry>,
 }
 
 impl StoredInvestigation {
-    pub fn new(report: &Report, needs_identity_review: bool) -> Self {
+    pub fn new(report: &Report, product: &ProductConfig) -> Self {
         Self {
             product_id: report.product_id.clone(),
             report_id: report.id,
-            needs_identity_review,
+            needs_identity_review: report.product.needs_identity_review,
+            rejection_catalog: Some(RejectionCatalog {
+                state_ids: product.not_needed_state_ids.iter().cloned().collect(),
+                tickets: BTreeMap::new(),
+            }),
             ticket_catalog: BTreeMap::new(),
             entries: Vec::new(),
         }
@@ -142,6 +157,13 @@ impl StoredInvestigation {
 
     pub fn remember_tickets(&mut self, tickets: &[Ticket]) -> Result<()> {
         self.ticket_catalog = ticket_catalog(tickets.iter())?;
+        if let Some(rejections) = &mut self.rejection_catalog {
+            rejections.tickets = ticket_catalog(
+                tickets
+                    .iter()
+                    .filter(|ticket| rejections.state_ids.contains(&ticket.state_id)),
+            )?;
+        }
         Ok(())
     }
 
@@ -178,6 +200,7 @@ impl StoredInvestigation {
         root_id: i64,
         product: &ProductConfig,
         sources: &mut impl InvestigationSources,
+        weekly: WeeklyEvidence,
     ) -> Result<()> {
         let mut unresolved =
             has_previous_uncertain_write(connection, &product.product_id, root_id)?
@@ -196,12 +219,8 @@ impl StoredInvestigation {
                 .context("saved write intent is missing")?;
             let review = if unresolved {
                 Some("A Linear write for this product needs reconciliation before more writes.")
-            } else if !self.write_still_supported(entry, write, product, sources)? {
-                Some(
-                    "Linear work or the configured proposal destination changed during investigation.",
-                )
             } else {
-                None
+                self.review_before_write(entry, write, product, sources, weekly)?
             };
             if let Some(reason) = review {
                 let finding = &mut self.entries[index].finding;
@@ -241,30 +260,51 @@ impl StoredInvestigation {
         Ok(())
     }
 
-    fn write_still_supported(
+    fn review_before_write(
         &self,
         entry: &Entry,
         write: &LinearWrite,
         product: &ProductConfig,
         sources: &mut impl InvestigationSources,
-    ) -> Result<bool> {
+        weekly: WeeklyEvidence,
+    ) -> Result<Option<&'static str>> {
+        let configured_states = product
+            .not_needed_state_ids
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let same_policy = self
+            .rejection_catalog
+            .as_ref()
+            .map_or(configured_states.is_empty(), |saved| {
+                saved.state_ids == configured_states
+            });
+        if !same_policy {
+            return Ok(Some(
+                "Review this write against the current Not needed configuration.",
+            ));
+        }
         let Some(route) = product
             .repositories
             .iter()
             .find(|route| entry.finding.repository.as_deref() == Some(&route.repository))
         else {
-            return Ok(false);
+            return Ok(Some(
+                "The configured repository changed during investigation.",
+            ));
         };
+        let changed = Some(
+            "Linear work or the configured proposal destination changed during investigation.",
+        );
         match write {
             LinearWrite::Comment { ticket, .. } => {
                 if !product.scopes.contains(&ticket.scope) {
-                    return Ok(false);
+                    return Ok(changed);
                 }
                 let current = sources.ticket(&ticket.id)?;
-                Ok(
-                    current == **ticket
-                        && !product.not_needed_state_ids.contains(&current.state_id),
-                )
+                if current != **ticket || configured_states.contains(&current.state_id) {
+                    return Ok(changed);
+                }
             }
             LinearWrite::Create {
                 destination,
@@ -274,14 +314,38 @@ impl StoredInvestigation {
                 if &route.destination != destination
                     || &route.proposal_state_id != proposal_state_id
                 {
-                    return Ok(false);
+                    return Ok(changed);
                 }
-                let current = scoped_tickets(product, sources)?;
-                let catalog =
-                    ticket_catalog(current.iter().filter(|ticket| !self.created_here(ticket)))?;
-                Ok(catalog == self.ticket_catalog)
             }
         }
+
+        if !configured_states.is_empty() || matches!(write, LinearWrite::Create { .. }) {
+            let current = scoped_tickets(product, sources)?;
+            let unchanged = match write {
+                LinearWrite::Create { .. } => {
+                    let catalog =
+                        ticket_catalog(current.iter().filter(|ticket| !self.created_here(ticket)))?;
+                    catalog == self.ticket_catalog
+                }
+                LinearWrite::Comment { .. } => {
+                    let catalog = ticket_catalog(
+                        current
+                            .iter()
+                            .filter(|ticket| configured_states.contains(&ticket.state_id)),
+                    )?;
+                    self.rejection_catalog
+                        .as_ref()
+                        .is_some_and(|saved| catalog == saved.tickets)
+                }
+            };
+            if !unchanged {
+                return Ok(changed);
+            }
+            if let Some(evidence) = &entry.finding.rejection {
+                return recheck_rejection(evidence, &current, product, sources, weekly);
+            }
+        }
+        Ok(None)
     }
 
     fn created_here(&self, ticket: &Ticket) -> bool {
@@ -308,6 +372,50 @@ impl StoredInvestigation {
             }
         })
     }
+}
+
+fn recheck_rejection(
+    evidence: &RejectionEvidence,
+    tickets: &[Ticket],
+    product: &ProductConfig,
+    sources: &mut impl InvestigationSources,
+    weekly: WeeklyEvidence,
+) -> Result<Option<&'static str>> {
+    let changed = Some("The prior rejection changed during investigation.");
+    let Some(latest) = evidence.decisions.first() else {
+        return Ok(changed);
+    };
+    for decision in &evidence.decisions {
+        let Some(ticket) = tickets.iter().find(|ticket| {
+            ticket.id == decision.ticket_id
+                && product.not_needed_state_ids.contains(&ticket.state_id)
+        }) else {
+            return Ok(changed);
+        };
+        if sources
+            .rejection_decision(ticket, &product.not_needed_state_ids)?
+            .as_ref()
+            != Some(decision)
+        {
+            return Ok(changed);
+        }
+    }
+    if let Some(reason) = &evidence.reason
+        && sources.rejection_reason(latest)?.as_ref() != Some(reason)
+    {
+        return Ok(changed);
+    }
+    let now = sources.now();
+    if !evidence.decisions.iter().all(|decision| {
+        decision
+            .expiry(now)
+            .is_some_and(|expiry| weekly.qualifies_at(now, expiry))
+    }) {
+        return Ok(Some(
+            "The weekly evidence is no longer current for reconsideration.",
+        ));
+    }
+    Ok(None)
 }
 
 fn ticket_catalog<'a>(

@@ -1,14 +1,16 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use ship_signal::{
     AnalysisInput, Classification, Feedback, FeedbackSource, Need, Workflow,
     investigation::{
         Assessment, AssessmentKind, CodeEvidence, CodeSelection, Finding, FindingKind,
         InvestigationConfig, InvestigationModel, InvestigationSources, LinearReference,
-        LinearScope, LinearWrite, ProductConfig, Proposal, PullRequestEvidence, RepositoryRoute,
-        RepositorySnapshot, SearchContext, Ticket, WriteStatus,
+        LinearScope, LinearWrite, ProductConfig, Proposal, PullRequestEvidence, RejectionCoverage,
+        RejectionDecision, RejectionMatch, RejectionReason, RepositoryRoute, RepositorySnapshot,
+        SearchContext, Ticket, WriteStatus,
     },
 };
+use std::collections::BTreeMap;
 
 struct Source(Vec<Feedback>);
 
@@ -26,8 +28,8 @@ impl FeedbackSource for Source {
     }
 }
 
-fn report(workflow: &mut Workflow, product: &str) -> Result<i64> {
-    let rows = (0..4)
+fn stock_feedback(product: &str) -> Vec<Feedback> {
+    (0..4)
         .map(|i| Feedback {
             product_id: product.into(),
             feedback_source_id: "mail".into(),
@@ -37,33 +39,42 @@ fn report(workflow: &mut Workflow, product: &str) -> Result<i64> {
             text: format!("{product} private message {i}"),
             source_reference: None,
         })
-        .collect();
+        .collect()
+}
+
+fn stock_classifications() -> Vec<Classification> {
+    [
+        ("Stock alerts", Some("Email")),
+        ("Stock alerts", Some("SMS")),
+        ("History", None),
+        ("Accessibility", None),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(message_index, (need, variant))| Classification {
+        message_index,
+        needs: vec![Need {
+            need: need.into(),
+            variant: variant.map(str::to_owned),
+        }],
+    })
+    .collect()
+}
+
+fn report(workflow: &mut Workflow, product: &str) -> Result<i64> {
     Ok(workflow
         .analyze(
             product,
-            &mut Source(rows),
-            "2026-11-06T09:00:00Z".parse()?,
-            "2026-11-13T09:00:00Z".parse()?,
-            |_| {
-                Ok([
-                    ("Stock alerts", Some("Email")),
-                    ("Stock alerts", Some("SMS")),
-                    ("History", None),
-                    ("Accessibility", None),
-                ]
-                .into_iter()
-                .enumerate()
-                .map(|(message_index, (need, variant))| Classification {
-                    message_index,
-                    needs: vec![Need {
-                        need: need.into(),
-                        variant: variant.map(str::to_owned),
-                    }],
-                })
-                .collect())
-            },
+            &mut Source(stock_feedback(product)),
+            cutoff() - TimeDelta::weeks(1),
+            cutoff(),
+            |_| Ok(stock_classifications()),
         )?
         .id)
+}
+
+fn cutoff() -> DateTime<Utc> {
+    "2026-11-13T09:00:00Z".parse().unwrap()
 }
 
 fn config() -> InvestigationConfig {
@@ -100,10 +111,35 @@ struct Services {
     writes: Vec<LinearWrite>,
     tickets: Vec<Ticket>,
     fail_write: bool,
+    fail_validation: bool,
+    now: Option<DateTime<Utc>>,
+    rejections: BTreeMap<String, RejectionDecision>,
+    rejection_reason: Option<RejectionReason>,
     change_scope_before_write: bool,
 }
 
 impl InvestigationSources for Services {
+    fn now(&self) -> DateTime<Utc> {
+        self.now.unwrap_or_else(Utc::now)
+    }
+
+    fn rejection_decision(
+        &mut self,
+        ticket: &Ticket,
+        _: &[String],
+    ) -> Result<Option<RejectionDecision>> {
+        Ok(self.rejections.get(&ticket.id).cloned())
+    }
+
+    fn rejection_reason(&mut self, _: &RejectionDecision) -> Result<Option<RejectionReason>> {
+        Ok(self.rejection_reason.clone())
+    }
+
+    fn validate_write(&mut self, _: &LinearWrite) -> Result<()> {
+        anyhow::ensure!(!self.fail_validation, "Linear validation unavailable");
+        Ok(())
+    }
+
     fn tickets(&mut self, _: &ProductConfig) -> Result<Vec<Ticket>> {
         self.reads += 1;
         self.catalog_reads += 1;
@@ -280,6 +316,7 @@ fn assessment(kind: AssessmentKind, variant_index: usize) -> Assessment {
         repository: Some("example/shop".into()),
         matching_ticket_ids: vec![],
         related_ticket_ids: vec![],
+        rejection_matches: vec![],
         code_indices: vec![0],
         reason: "The evidence covers the selected delivery channel.".into(),
         proposal: None,
@@ -462,14 +499,10 @@ fn rejects_same_scope_and_requires_live_evidence_for_already_available_behavior(
     let mut workflow = Workflow::open(state.path())?;
     assign_identities(&workflow, "shop")?;
     let first = report(&mut workflow, "shop")?;
-    let mut rejected = email_ticket("rejected", "canceled");
-    rejected.archived = true;
-    let mut services = Services {
-        tickets: vec![rejected],
-        ..Default::default()
-    };
-    let mut email = assessment(AssessmentKind::MatchingWork, 0);
-    email.matching_ticket_ids = vec!["issue-email".into()];
+    let mut services = rejection_services(cutoff() + TimeDelta::days(1), cutoff());
+    services.tickets[0].archived = true;
+    let mut email = assessment(AssessmentKind::DistinctWork, 0);
+    email.rejection_matches = vec![rejection_match(RejectionCoverage::Full)];
     let sms = assessment(AssessmentKind::ExistingFunctionality, 1);
     let mut model = Model {
         findings: vec![email, sms],
@@ -655,5 +688,407 @@ fn moving_a_ticket_between_product_scopes_cannot_mix_evidence() -> Result<()> {
     assert_eq!(model.calls, 2);
     assert_eq!(result.findings[0].kind, FindingKind::HumanReview);
     assert_eq!(services.writes.len(), 2);
+    Ok(())
+}
+
+fn rejection_services(expiry: DateTime<Utc>, now: DateTime<Utc>) -> Services {
+    let ticket = email_ticket("rejected", "canceled");
+    let decision = RejectionDecision {
+        ticket_id: ticket.id.clone(),
+        history_id: "history-email".into(),
+        decided_at: expiry - TimeDelta::days(90),
+        actor_id: Some("reviewer".into()),
+    };
+    Services {
+        now: Some(now),
+        rejections: BTreeMap::from([(ticket.id.clone(), decision)]),
+        rejection_reason: Some(RejectionReason {
+            comment_id: "reason-email".into(),
+            text: "Wait for the new inventory event.\nThen measure notification volume.".into(),
+        }),
+        tickets: vec![ticket],
+        ..Default::default()
+    }
+}
+
+fn rejection_match(coverage: RejectionCoverage) -> RejectionMatch {
+    RejectionMatch {
+        ticket_id: "issue-email".into(),
+        coverage,
+    }
+}
+
+fn reconsider_email() -> Model {
+    let mut email = assessment(AssessmentKind::DistinctWork, 0);
+    email.rejection_matches = vec![rejection_match(RejectionCoverage::Full)];
+    email.proposal = Some(Proposal {
+        title: "Send stock alert by email".into(),
+        behavior: "Send email via the existing notification system.".into(),
+        assumptions: vec!["The subscriber opted into email.".into()],
+        acceptance_criteria: vec!["An email is sent when the item comes back in stock.".into()],
+        scope_boundaries: vec!["Use the existing inventory event.".into()],
+        uses_existing_infrastructure: true,
+    });
+    Model {
+        findings: vec![email, assessment(AssessmentKind::Uncertain, 1)],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn combined_work_goes_to_review_for_partial_overlap_even_after_expiry() -> Result<()> {
+    let state = tempfile::NamedTempFile::new()?;
+    let mut workflow = Workflow::open(state.path())?;
+    assign_identities(&workflow, "shop")?;
+    for (offset, coverage, expected, message) in [
+        (
+            -1,
+            RejectionCoverage::Partial,
+            FindingKind::HumanReview,
+            "combines",
+        ),
+        (
+            1,
+            RejectionCoverage::Partial,
+            FindingKind::HumanReview,
+            "combines",
+        ),
+        (
+            -1,
+            RejectionCoverage::Uncertain,
+            FindingKind::HumanReview,
+            "overlap",
+        ),
+        (
+            -1,
+            RejectionCoverage::Full,
+            FindingKind::RejectedWork,
+            "expires",
+        ),
+    ] {
+        let id = report(&mut workflow, "shop")?;
+        let mut services = rejection_services(cutoff(), cutoff() + TimeDelta::seconds(offset));
+        if coverage == RejectionCoverage::Full {
+            services.tickets[0].description = "Reject stock alerts by both email and SMS.".into();
+        }
+        let mut model = reconsider_email();
+        model.findings.truncate(1);
+        model.findings[0].variant_indices = vec![0, 1];
+        model.findings[0].rejection_matches = vec![rejection_match(coverage)];
+        model.findings[0].proposal.as_mut().unwrap().behavior = "Send email and SMS.".into();
+
+        let result = workflow.investigate("shop", id, &config(), &mut services, &mut model)?;
+        let finding = &result.findings[0];
+        assert_eq!(finding.kind, expected);
+        assert_eq!(finding.variants, ["Email", "SMS"]);
+        assert!(finding.reason.contains(message), "{}", finding.reason);
+        assert_eq!(finding.tickets, [services.tickets[0].url.clone()]);
+        assert!(finding.operation_id.is_none());
+        assert!(services.writes.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn expiry_requires_a_current_week_and_creates_one_new_linked_ticket() -> Result<()> {
+    let state = tempfile::NamedTempFile::new()?;
+    let mut workflow = Workflow::open(state.path())?;
+    assign_identities(&workflow, "shop")?;
+    let second = TimeDelta::seconds(1);
+    for (expiry, now, expected) in [
+        (cutoff(), cutoff() - second, FindingKind::RejectedWork),
+        (
+            cutoff() + second,
+            cutoff() + second,
+            FindingKind::HumanReview,
+        ),
+        (
+            cutoff() - second,
+            cutoff() + TimeDelta::weeks(1),
+            FindingKind::HumanReview,
+        ),
+        (cutoff(), cutoff(), FindingKind::Proposal),
+        (cutoff() - second, cutoff() + second, FindingKind::Proposal),
+    ] {
+        let id = report(&mut workflow, "shop")?;
+        let mut services = rejection_services(expiry, now);
+        let mut model = reconsider_email();
+        let result = workflow.investigate("shop", id, &config(), &mut services, &mut model)?;
+        assert_eq!(result.findings[0].kind, expected);
+        if expected != FindingKind::Proposal {
+            assert!(services.writes.is_empty());
+            continue;
+        }
+        let [
+            LinearWrite::Create {
+                operation_id,
+                proposal_state_id,
+                body,
+                ..
+            },
+        ] = services.writes.as_slice()
+        else {
+            panic!("expected exactly one intake ticket");
+        };
+        uuid::Uuid::parse_str(operation_id)?;
+        assert_ne!(operation_id, &services.tickets[0].id);
+        assert_eq!(proposal_state_id, "backlog");
+        assert!(body.contains(&services.tickets[0].url));
+        assert!(
+            body.contains(
+                "> Wait for the new inventory event.\n> Then measure notification volume."
+            )
+        );
+        assert!(body.contains("2 of 4 customers (50.00%)"));
+        assert!(body.contains("requires fresh approval"));
+
+        let replay = Workflow::open(state.path())?.investigate(
+            "shop",
+            id,
+            &config(),
+            &mut services,
+            &mut model,
+        )?;
+        assert_eq!(
+            replay.findings[0].operation_id,
+            result.findings[0].operation_id
+        );
+        assert_eq!(services.writes.len(), 1);
+    }
+    Ok(())
+}
+
+#[test]
+fn separate_variant_and_human_reopening_follow_ordinary_investigation() -> Result<()> {
+    let state = tempfile::NamedTempFile::new()?;
+    let mut workflow = Workflow::open(state.path())?;
+    assign_identities(&workflow, "shop")?;
+    let id = report(&mut workflow, "shop")?;
+    let mut services = rejection_services(cutoff() + TimeDelta::days(1), cutoff());
+    let mut foreign_rejection = services.tickets[0].clone();
+    foreign_rejection.id = "foreign".into();
+    foreign_rejection.scope.team_id = "team-other".into();
+    services.tickets.push(foreign_rejection);
+    let mut model = reconsider_email();
+    model.findings[1] = scoped_findings().remove(1);
+
+    let result = workflow.investigate("shop", id, &config(), &mut services, &mut model)?;
+    assert_eq!(result.findings[0].kind, FindingKind::RejectedWork);
+    assert_eq!(result.findings[1].kind, FindingKind::Proposal);
+    assert!(
+        matches!(services.writes.as_slice(), [LinearWrite::Create { title, .. }] if title.contains("SMS"))
+    );
+
+    let id = report(&mut workflow, "shop")?;
+    services.tickets[0].state_id = "planned".into();
+    services.tickets[0].state_type = "unstarted".into();
+    services.writes.clear();
+    model.findings = vec![
+        scoped_findings().remove(0),
+        assessment(AssessmentKind::Uncertain, 1),
+    ];
+    let result = workflow.investigate("shop", id, &config(), &mut services, &mut model)?;
+    assert_eq!(result.findings[0].kind, FindingKind::MatchingWork);
+    assert!(
+        matches!(services.writes.as_slice(), [LinearWrite::Comment { ticket, .. }] if ticket.state_id == "planned")
+    );
+    Ok(())
+}
+
+#[test]
+fn reconsideration_uses_the_most_recent_rejection_and_its_reason() -> Result<()> {
+    let state = tempfile::NamedTempFile::new()?;
+    let mut workflow = Workflow::open(state.path())?;
+    assign_identities(&workflow, "shop")?;
+    let mut services = rejection_services(cutoff() - TimeDelta::days(1), cutoff());
+    let mut newer = services.tickets[0].clone();
+    newer.id = "issue-newer".into();
+    newer.url = "https://linear.app/example/issue/EMAIL-2".into();
+    services.tickets.push(newer.clone());
+    let mut latest = services.rejections["issue-email"].clone();
+    latest.ticket_id = newer.id.clone();
+    latest.history_id = "history-newer".into();
+    latest.decided_at += TimeDelta::days(2);
+    services.rejections.insert(newer.id.clone(), latest.clone());
+    let mut model = reconsider_email();
+    model.findings[0].rejection_matches.push(RejectionMatch {
+        ticket_id: newer.id.clone(),
+        coverage: RejectionCoverage::Full,
+    });
+
+    for (date, missing, expected) in [
+        (latest.decided_at, false, FindingKind::RejectedWork),
+        (
+            latest.decided_at - TimeDelta::days(1),
+            true,
+            FindingKind::HumanReview,
+        ),
+        (
+            latest.decided_at - TimeDelta::days(1),
+            false,
+            FindingKind::Proposal,
+        ),
+    ] {
+        let id = report(&mut workflow, "shop")?;
+        latest.decided_at = date;
+        services.rejections.insert(newer.id.clone(), latest.clone());
+        let reason = services.rejection_reason.take();
+        if !missing {
+            services.rejection_reason = reason.clone();
+        }
+        let result = workflow.investigate("shop", id, &config(), &mut services, &mut model)?;
+        assert_eq!(result.findings[0].kind, expected);
+        services.rejection_reason = reason;
+    }
+    let [LinearWrite::Create { body, .. }] = services.writes.as_slice() else {
+        panic!("expected only one successor");
+    };
+    let rejection_section = body.split_once("## Prior rejection").unwrap().1;
+    assert!(rejection_section.contains(&newer.url));
+    Ok(())
+}
+
+#[test]
+fn pending_reconsideration_rechecks_evidence_after_a_restart() -> Result<()> {
+    let state = tempfile::NamedTempFile::new()?;
+    let mut workflow = Workflow::open(state.path())?;
+    assign_identities(&workflow, "shop")?;
+    for change in ["history", "reason", "week", "legacy", "none"] {
+        let id = report(&mut workflow, "shop")?;
+        let mut services = rejection_services(cutoff(), cutoff());
+        services.fail_validation = true;
+        let mut model = reconsider_email();
+        assert!(
+            workflow
+                .investigate("shop", id, &config(), &mut services, &mut model)
+                .is_err()
+        );
+        assert!(services.writes.is_empty());
+        let db = rusqlite::Connection::open(state.path())?;
+        let saved_id: String = db.query_row(
+            "SELECT json_extract(result, '$.entries[0].finding.operation_id')
+             FROM investigation_runs WHERE original_report_id = ?1",
+            [id],
+            |row| row.get(0),
+        )?;
+
+        services.fail_validation = false;
+        match change {
+            "history" => {
+                services
+                    .rejections
+                    .get_mut("issue-email")
+                    .unwrap()
+                    .history_id = "new-history".into()
+            }
+            "reason" => {
+                services.rejection_reason.as_mut().unwrap().text = "Replacement reason".into()
+            }
+            "week" => services.now = Some(cutoff() + TimeDelta::weeks(1)),
+            "legacy" => {
+                db.execute(
+                    "UPDATE investigation_runs SET result = json_remove(result, '$.rejection_catalog', '$.entries[0].finding.rejection')
+                     WHERE original_report_id = ?1",
+                    [id],
+                )?;
+            }
+            "none" => services.fail_write = true,
+            _ => unreachable!(),
+        }
+        let restarted = Workflow::open(state.path())?;
+        let result = restarted.investigate("shop", id, &config(), &mut services, &mut model)?;
+        assert_eq!(model.calls, 2);
+        if change == "none" {
+            assert_eq!(
+                result.findings[0].operation_id.as_deref(),
+                Some(saved_id.as_str())
+            );
+            assert!(matches!(
+                result.findings[0].write,
+                Some(WriteStatus::Uncertain)
+            ));
+            let result = restarted.investigate("shop", id, &config(), &mut services, &mut model)?;
+            assert!(matches!(
+                result.findings[0].write,
+                Some(WriteStatus::Uncertain)
+            ));
+            assert_eq!(services.writes.len(), 1);
+        } else {
+            assert_eq!(result.findings[0].kind, FindingKind::HumanReview);
+            assert!(services.writes.is_empty());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn scheduler_uses_its_weekly_cutoffs_for_reconsideration() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let state = dir.path().join("state.sqlite");
+    assign_identities(&Workflow::open(&state)?, "shop")?;
+    let friday = "2026-03-13T13:00:00Z".parse()?;
+    let mut scheduler = ship_signal::WeeklyScheduler::open(&state, "shop", "America/New_York")?;
+    let mut feedback = stock_feedback("shop");
+    for row in &mut feedback {
+        row.submitted_at = friday - TimeDelta::hours(1);
+    }
+    let cycle = scheduler
+        .tick(friday, &mut Source(feedback), |_| {
+            Ok(stock_classifications())
+        })?
+        .unwrap();
+    assert_eq!(
+        cycle.analysis_cutoff - cycle.feedback_start,
+        TimeDelta::hours(167)
+    );
+    let mut services = rejection_services(friday, friday);
+    let mut model = reconsider_email();
+    let result = scheduler
+        .investigate_due(friday, &config(), &mut services, &mut model)?
+        .unwrap();
+    assert_eq!(result.findings[0].kind, FindingKind::Proposal);
+    assert_eq!(services.writes.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn reconsideration_respects_the_strict_threshold_and_an_existing_successor() -> Result<()> {
+    let state = tempfile::NamedTempFile::new()?;
+    let mut workflow = Workflow::open(state.path())?;
+    assign_identities(&workflow, "shop")?;
+    let mut services = rejection_services(cutoff(), cutoff());
+    let mut model = reconsider_email();
+    workflow.assign_need_identity("shop", "Profile", "Profile")?;
+    let threshold = workflow.analyze(
+        "shop",
+        &mut Source(stock_feedback("shop")),
+        cutoff() - TimeDelta::weeks(1),
+        cutoff(),
+        |_| {
+            let mut classifications = stock_classifications();
+            classifications[1].needs = vec![Need {
+                need: "Profile".into(),
+                variant: None,
+            }];
+            Ok(classifications)
+        },
+    )?;
+    let result =
+        workflow.investigate("shop", threshold.id, &config(), &mut services, &mut model)?;
+    assert!(result.findings.is_empty());
+    assert_eq!(model.calls, 0);
+
+    let id = report(&mut workflow, "shop")?;
+    let mut successor = email_ticket("backlog", "backlog");
+    successor.id = "issue-successor".into();
+    services.tickets.push(successor.clone());
+    model.findings[0].kind = AssessmentKind::MatchingWork;
+    model.findings[0].matching_ticket_ids = vec![successor.id.clone()];
+    services.rejection_reason = None;
+    let result = workflow.investigate("shop", id, &config(), &mut services, &mut model)?;
+    assert_eq!(result.findings[0].kind, FindingKind::MatchingWork);
+    assert!(
+        matches!(services.writes.as_slice(), [LinearWrite::Comment { ticket, .. }] if ticket.id == successor.id)
+    );
     Ok(())
 }

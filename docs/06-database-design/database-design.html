@@ -17,7 +17,7 @@
 <div class="eyebrow">Ship Signal / Engineering guide / 06</div>
 <h1>Database design</h1>
 <p class="lede">Where feedback comes from, how weekly cycles and reports are saved, and how confirmed needs become evidence for Linear proposals.</p>
-<p class="meta">Implemented design · Source revision is the checkout containing this guide. See <a href="../../src/lib.rs">single-product report storage</a>, <a href="../../src/weekly_schedule.rs">weekly scheduling</a>, and <a href="../../src/investigation/state.rs">investigation storage</a>.</p>
+<p class="meta">Implemented design · Source revision is the checkout containing this guide. See <a href="../../src/lib.rs">single-product report storage</a>, <a href="../../src/weekly_schedule.rs">weekly scheduling</a>, <a href="../../src/investigation/state.rs">investigation storage</a>, and <a href="../../src/investigation/rejection.rs">rejection evidence</a>.</p>
 <nav aria-label="Contents">
 <a href="#overview">01 · Two stores</a><a href="#relationships">02 · Relationships</a><a href="#source">03 · Feedback source</a><a href="#tables">04 · SQLite tables</a><a href="#json">05 · Report JSON</a><a href="#identity">06 · Needs &amp; IDs</a><a href="#flow">07 · Write flow</a><a href="#boundaries">08 · Boundaries</a>
 </nav>
@@ -42,7 +42,7 @@
 <div class="diagram">
 <svg viewBox="0 0 960 1013" role="img" aria-labelledby="er-title er-description">
 <title id="er-title">SQLite tables and application-level relationships</title>
-<desc id="er-description">Each analysis report stores one product object in its JSON. Each completed weekly cycle and each investigation run has a report ID foreign key. Investigation scope ownership is keyed by the Linear team and project pair. Issues with recorded write intents also retain a product owner. Deferrals and reviewed_from also refer to reports through application logic. Alias mappings match product ID and need text. A solid arrow marks the SQLite foreign key and dashed arrows mark application relationships.</desc>
+<desc id="er-description">Each analysis report stores one product object in its JSON. Each completed weekly cycle and each investigation run has a report ID foreign key. Investigation scope ownership is keyed by the Linear team and project pair. Issues with recorded write intents also retain a product owner. Rejection evidence in investigation JSON references Linear issue history and comments. Deferrals and reviewed_from also refer to reports through application logic. Alias mappings match product ID and need text. A solid arrow marks the SQLite foreign key and dashed arrows mark application relationships.</desc>
 <defs><marker id="arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="#8ce0c2"/></marker></defs>
 <g fill="#101820" stroke="#557383" stroke-width="1.5"><rect x="25" y="40" width="410" height="220" rx="12"/><rect x="525" y="40" width="410" height="180" rx="12"/><rect x="25" y="320" width="410" height="235" rx="12"/><rect x="525" y="350" width="410" height="150" rx="12"/><rect x="25" y="615" width="410" height="171" rx="12"/><rect x="525" y="615" width="410" height="171" rx="12"/><rect x="525" y="825" width="410" height="150" rx="12"/></g>
 <g fill="#eef5f6" font-family="ui-monospace,monospace" font-size="17">
@@ -58,6 +58,7 @@
 <text x="545" y="418">PK  product_id TEXT</text><text x="545" y="448">PK  need TEXT</text><text x="545" y="478">    identity TEXT</text>
 <text x="45" y="648" fill="#8ce0c2" font-weight="700">investigation_runs</text>
 <text x="45" y="682">PK  product_id TEXT</text><text x="45" y="712">PK, FK  original_report_id INTEGER</text><text x="45" y="742">    result TEXT (JSON)</text>
+<text x="45" y="767" font-size="14">JSON holds Linear rejection evidence</text>
 <text x="545" y="648" fill="#8ce0c2" font-weight="700">investigation_scopes</text>
 <text x="545" y="682">PK  team_id TEXT</text><text x="545" y="712">PK  project_id TEXT</text><text x="545" y="742">    product_id TEXT</text>
 <text x="545" y="860" fill="#8ce0c2" font-weight="700">investigation_issues</text>
@@ -200,7 +201,23 @@ CREATE TABLE IF NOT EXISTS investigation_issues (
 <p>For example, a completed <code>demo-shop</code> cycle on <code>2026-11-13</code> in <code>America/New_York</code> has a UTC feedback interval of <code>[2026-11-06T14:00:00Z, 2026-11-13T14:00:00Z)</code> and approval cutoff <code>2026-11-14T14:00:00Z</code>. The report ID in <code>weekly-cycles</code> opens the original snapshot with <code>report</code>.</p>
 <h3>E. <code>investigation_runs</code> — one workflow result per original report</h3>
 <p>The key is <code>(product_id, original_report_id)</code>. The JSON stores the report ID actually used, the identity-review flag, an issue catalog of IDs and SHA-256 fingerprints, and findings with evidence pointers and any write intents. A reviewed report can replace a provisional result. A completed investigation stays bound to the report used to produce it.</p>
-<p>Each intended Linear comment or proposal is stored alongside its finding with a UUID. Its state is saved as <code>pending</code>, then <code>uncertain</code> immediately before sending the request, then <code>completed</code> with a Linear reference when the response confirms success. An uncertain result holds further writes for that product. A proposal rechecks the issue catalog before writing. An evidence comment rechecks its target issue. These updates commit before and after the network call in separate SQLite operations.</p>
+<p><code>rejection_catalog</code> stores the configured rejection state IDs and the fingerprints of in-scope rejected issues. When a finding uses an expired rejection, its <code>rejection</code> records Linear issue and transition IDs, the decision time and actor, and any marked comment ID and reason used in the write. The example shows fields from the saved finding.</p>
+<pre><code>{
+  "rejection": {
+    "decisions": [{
+      "ticket_id": "issue-email",
+      "history_id": "history-email",
+      "decided_at": "2026-08-15T09:00:00Z",
+      "actor_id": "reviewer"
+    }],
+    "reason": {
+      "comment_id": "reason-email",
+      "text": "Wait for the new inventory event."
+    }
+  }
+}</code></pre>
+<p>Each intended Linear comment or proposal is stored with a UUID. Before delivery, proposals recheck the issue catalog, comments recheck their target and any configured rejection catalog, and reconsidered writes recheck the prior decision, reason, and report freshness. Pending writes saved before this catalog was introduced go to review when rejection statuses are configured. Completed findings remain readable.</p>
+<p>The operation state moves from <code>pending</code> to <code>uncertain</code> just before sending the request, then to <code>completed</code> with a Linear reference when the response confirms success. An uncertain result holds further writes for that product. The state changes before and after the network call commit in separate SQLite operations.</p>
 <h3>F. <code>investigation_scopes</code> — Linear ownership within this installation</h3>
 <p>Each team and project pair is claimed by one product in a short transaction. An empty project ID represents the team’s unprojected issues. Before a ready report searches Linear, the workflow verifies that the requested product owns all its scopes. This prevents two product configurations using the same SQLite file from sharing one Linear scope.</p>
 <h3>G. <code>investigation_issues</code> — product ownership follows the issue</h3>
@@ -295,8 +312,8 @@ Need { need: "Export orders", variant: Some("CSV") }
 <li><strong>Insert report 1.</strong> Serialize the complete snapshot, then execute one <code>INSERT INTO analysis_reports(product_id, report) VALUES (?1, ?2) RETURNING id</code>. For a scheduled analysis, the same transaction marks the cycle completed and links this report. Source reads and classification finish before that transaction.</li>
 <li><strong>Review unresolved needs.</strong> Read report 1 and same-product aliases to build the queue. A confirmed decision inserts a mapping immediately; a deferral inserts a report-scoped deferral row. These decisions survive quitting or interruption.</li>
 <li><strong>Insert reviewed report 2.</strong> On review completion, recalculate from report 1’s saved inputs and classifications using current mappings. Save a new row with <code>reviewed_from: 1</code>. This step uses the inputs and classifications already in SQLite. Deferred needs can leave the new report provisional.</li>
-<li><strong>Investigate a ready report.</strong> Compare qualifying need variants with existing work, PRs, and code. Save findings and any intended Linear writes. For example, report 2 can support an email ticket and a new SMS proposal while pointing both outcomes to the same underlying need’s supporting messages.</li>
-<li><strong>Send each eligible write.</strong> Commit the operation UUID and uncertainty state before calling Linear. A response with the same UUID completes the write. A restart can continue a pending write and surfaces an uncertain one for reconciliation.</li>
+<li><strong>Investigate a ready report.</strong> Compare qualifying behavior with scoped tickets, PRs, and code. An email-only rejection sends a combined email-and-SMS proposal to review. A fully covered request can return as a new proposal after expiry with a qualifying weekly report. Save the finding, rejection evidence, and any intended write.</li>
+<li><strong>Send each eligible write.</strong> Recheck the Linear facts and weekly cutoff used for the write. Commit the operation UUID and uncertainty state before calling Linear. A response with the same UUID completes the write. A restart can continue a pending write and surfaces an uncertain one for reconciliation.</li>
 </ol>
 <div class="grid">
 <article class="card"><h3>What changes?</h3><p>The alias table gains the confirmed mapping. In report 2, the example need has <code>identity: "export-orders"</code> and the product’s review flag becomes false if no unresolved needs remain.</p></article>
@@ -315,7 +332,7 @@ Need { need: "Export orders", variant: Some("CSV") }
 <tr><td>Historical source corrections</td><td>Reviewing saved classifications is implemented. The wider historical rerun and comparison workflow described in ADR-0005 is separate; <code>reviewed_from</code> records identity-review derivation here.</td></tr>
 <tr><td>Retention and deletion</td><td>Saved reports contain copied customer messages and IDs. This code does not implement a retention/deletion policy or automatic cleanup of reports and deferrals.</td></tr>
 <tr><td>Later workflow state</td><td>Ticket links, approvals, repository ownership, implementation runs, and external-operation recovery are covered by the wider MVP specification.</td></tr>
-<tr><td>Identity meaning</td><td>A confirmed identity groups customer needs. It does not prove that a proposed implementation has the same scope as an existing ticket or resolve the similar-feature cooldown policy.</td></tr>
+<tr><td>Identity meaning</td><td>A confirmed identity groups customer needs. Ticket matching and cooldown coverage compare documented behavior in the selected product.</td></tr>
 </tbody></table></div>
 <h3>Source and accepted decisions</h3>
 <ul>

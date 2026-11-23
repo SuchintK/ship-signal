@@ -129,13 +129,12 @@ If implementation requires expanded scope or new infrastructure, stop and report
 
 When a ticket is marked **"Not needed"**:
 
-1. Suppress proposals for the same or similar feature for **90 days from that decision**.
-2. After the cooldown, the feature must exceed **25% again using that week's feedback** before reconsideration.
-3. Create a **new ticket**, linking to the older ticket and including its rejection reason and the renewed evidence.
-4. Leave the previous ticket unchanged; do not reopen it.
-5. Require fresh approval before implementation.
+1. Suppress a proposal when the rejection covers its entire behavior and fewer than **90 elapsed days** have passed since the recorded decision. Partial or uncertain overlap goes to human review. For example, rejecting email alerts sends a combined email-and-SMS proposal to review, while SMS-only follows normal investigation. A person can move the issue out of **Not needed** to restore ordinary status handling.
+2. After expiry, reconsider fully covered work only when demand **exceeds 25%** in the current weekly report and the report closed at or after expiry. Count the whole qualifying interval, including a week that straddles expiry.
+3. Create a **new ticket** when the behavior still qualifies for a proposal. Link the older ticket and include renewed evidence and the decision author’s marked rejection reason from Linear. The previous ticket remains untouched.
+4. Require fresh approval before implementation.
 
-The 90 days is a rejection cooldown, not a rolling feedback-analysis window. Supporting feedback remains evidence subject to the retention policy.
+Rejection coverage uses documented ticket behavior within the configured product scopes. Missing decision history or a missing or conflicting reason for a successor goes to local review. Supporting feedback remains evidence subject to the retention policy.
 
 ## 9. Approval and ticket changes
 

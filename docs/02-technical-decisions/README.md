@@ -170,7 +170,7 @@ For implementation testing, the customer provides a development/test application
 
 Use product-scoped need IDs to group demand and apply the strict 25% threshold. Compare the variant’s concrete behavior with existing ticket scope. For example, two email requests and two SMS requests among ten feature-requesting customers qualify the notification need at 40%. An email-specific proposal records both variants and its own scope.
 
-SUC-22 still owns which similar behaviors a rejection suppresses and how the 90-day cooldown is enforced. SUC-21 hands off matches to rejected behavior without changing or recreating the rejected ticket. A shared need ID does not establish the match.
+SUC-22 applies the cooldown when a current rejection covers the entire proposal. Partial or uncertain overlap goes to local review. Disjoint variants follow ordinary investigation. The cooldown starts at the recorded Linear status transition. After expiry, a successor requires a fresh weekly qualification and the marked reason from the decision author. See the [product cooldown policy](../01-grill-session/README.md#8-ticket-eligibility-and-rejected-feature-cooldown).
 
 ## 7. Ticket search boundaries and repository routing
 
