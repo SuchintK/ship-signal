@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ship Signal · Name the product report</title>
+<style>
+:root{color-scheme:light;--ink:#18303d;--line:#d2e1e8;--accent:#116553}
+*{box-sizing:border-box}body{margin:0;color:var(--ink);background:#fff;font:17px/1.6 system-ui,sans-serif}
+header,.layout{max-width:1060px;margin:auto;padding:28px 24px}
+header{padding-bottom:10px}.layout{display:grid;grid-template-columns:185px minmax(0,1fr);gap:32px;padding-top:10px}
+h1{font-size:clamp(29px,5vw,49px);line-height:1.12;margin:.2em 0}h2{font-size:25px;line-height:1.2;margin:24px 0 8px}
+.meta,figcaption{font-size:13px;color:#4b6170;overflow-wrap:anywhere}
+nav{position:sticky;top:24px;align-self:start;border-block:1px solid var(--line);padding:8px 0}
+nav ul{margin:0;padding-left:20px}nav li{margin:6px 0;font-size:14px}
+a{color:var(--accent);text-underline-offset:3px}a:focus-visible{outline:3px solid var(--accent)}
+code{font-family:ui-monospace,monospace;font-size:.88em}pre{padding:14px;border:1px solid var(--line);border-radius:6px;background:#f4f8fa;overflow:auto}
+figure{margin:18px 0}figure pre{margin-top:5px}
+@media(max-width:720px){.layout{display:block}nav{position:static}}
+</style>
+</head>
+<body>
+<header>
+<p class="meta">Ship Signal · PR #11</p>
+<h1>Name the product report</h1>
+<p>Rust now reads a report's product data through <code>report.productReport</code>. The report command and saved reports keep the JSON key <code>product</code>.</p>
+<p class="meta">Analyzed source SHA: 165b7130684c4f078e907a67209e4674763dffe1<br>Base SHA: a10a672133fb2955be0dee4edffeccbbde7d142c</p>
+</header>
+<div class="layout">
+<nav aria-label="Walkthrough contents">
+<ul>
+<li><a href="#example">Read an existing report</a></li>
+<li><a href="#fields">Follow the Rust and JSON names</a></li>
+</ul>
+</nav>
+<main>
+<section id="example">
+<h2>Read an existing report</h2>
+<p>The report-loading test inserts a SQLite row with a <code>"product"</code> JSON object. The serialization test checks that a report containing the <code>Download orders</code> need emits that same JSON key.</p>
+<pre><code>cargo test --locked --test workflow loads_reports_using_the_database_row_id -- --exact
+cargo test --locked --test workflow reports_and_review_inputs_use_need_consistently -- --exact</code></pre>
+<p class="meta">Both tests passed locally as part of the <a href="../../tests/workflow.rs">workflow suite</a>.</p>
+</section>
+<section id="fields">
+<h2>Follow the Rust and JSON names</h2>
+<p>The <code>report</code> command calls <code>Workflow::report</code>. It reads the saved row into <code>StoredReport</code> and builds a <code>Report</code> for callers. The <code>ProductReport</code> inside it contains the demand denominator, review flag, and grouped needs.</p>
+<figure data-source="src/lib.rs" data-start="108" data-end="128"><figcaption>src/lib.rs · lines 108–128 <span>exact source excerpt</span></figcaption><pre><code>108      pub end: DateTime&lt;Utc&gt;,
+109      pub input: AnalysisInput,
+110      pub classifications: Vec&lt;Classification&gt;,
+111      #[allow(non_snake_case)]
+112      #[serde(rename = &quot;product&quot;)]
+113      pub productReport: ProductReport,
+114  }
+115
+116  // The row&#x27;s primary key is the report ID; it is not duplicated in the JSON.
+117  #[derive(Serialize, Deserialize)]
+118  struct StoredReport {
+119      // The JSON stores the parent report&#x27;s SQLite row ID.
+120      reviewed_from: Option&lt;i64&gt;,
+121      start: DateTime&lt;Utc&gt;,
+122      end: DateTime&lt;Utc&gt;,
+123      input: AnalysisInput,
+124      classifications: Vec&lt;Classification&gt;,
+125      #[allow(non_snake_case)]
+126      #[serde(rename = &quot;product&quot;)]
+127      productReport: ProductReport,
+128  }</code></pre></figure>
+<p>Serde uses <code>product</code> when reading or writing either struct as JSON. Rust callers use <code>productReport</code>. The lint allowance is scoped to the camel-case field.</p>
+<p class="meta"><a href="../../src/main.rs">CLI entry point</a> · <a href="../../src/lib.rs">Report types and loading</a> · <a href="../06-database-design/database-design.html#json">Saved report JSON</a></p>
+</section>
+</main>
+</div>
+</body>
+</html>
