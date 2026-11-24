@@ -218,7 +218,7 @@ impl Workflow {
             "Saved reviewed report {} (from {}).",
             reviewed.id, id
         )?;
-        if reviewed.product.needs_identity_review {
+        if reviewed.productReport.needs_identity_review {
             writeln!(
                 output,
                 "Some needs remain unresolved. Demand is provisional for this product."

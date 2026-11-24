@@ -228,12 +228,12 @@ fn mysql_and_postgres_save_equivalent_reports_with_controlled_classifications() 
             }
             _ if product == "demo-shop" => {
                 let export = report
-                    .product
+                    .productReport
                     .needs
                     .iter()
                     .find(|need| need.identity.as_deref() == Some("export-orders"))
                     .unwrap();
-                assert_eq!(report.product.denominator, 3);
+                assert_eq!(report.productReport.denominator, 3);
                 assert_eq!(export.customer_count, 2);
                 assert_eq!(export.variants, ["CSV", "PDF"]);
                 assert_eq!(export.message_indices, [0, 1, 2, 4]);
@@ -241,9 +241,9 @@ fn mysql_and_postgres_save_equivalent_reports_with_controlled_classifications() 
                 assert_eq!(report.classifications[2].needs[0].need, "Éxport orders");
             }
             _ if product == "absent" => {
-                assert_eq!(report.product.product_id, "absent");
-                assert_eq!(report.product.denominator, 0);
-                assert!(report.product.needs.is_empty());
+                assert_eq!(report.productReport.product_id, "absent");
+                assert_eq!(report.productReport.denominator, 0);
+                assert!(report.productReport.needs.is_empty());
             }
             _ => {}
         }

@@ -145,7 +145,7 @@ impl StoredInvestigation {
         Self {
             product_id: report.product_id.clone(),
             report_id: report.id,
-            needs_identity_review: report.product.needs_identity_review,
+            needs_identity_review: report.productReport.needs_identity_review,
             rejection_catalog: Some(RejectionCatalog {
                 state_ids: product.not_needed_state_ids.iter().cloned().collect(),
                 tickets: BTreeMap::new(),
