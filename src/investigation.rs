@@ -6,10 +6,16 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, fs::OpenOptions};
 
+mod rejection;
 mod state;
+
+use rejection::{Outcome, WeeklyEvidence};
 
 const MAX_EVIDENCE_BYTES: usize = 200_000;
 
+pub use rejection::{
+    RejectionCoverage, RejectionDecision, RejectionEvidence, RejectionMatch, RejectionReason,
+};
 pub use state::{Finding, FindingKind, InvestigationReport, WriteStatus};
 
 #[derive(Debug, Deserialize)]
@@ -240,6 +246,7 @@ pub struct Assessment {
     pub repository: Option<String>,
     pub matching_ticket_ids: Vec<String>,
     pub related_ticket_ids: Vec<String>,
+    pub rejection_matches: Vec<RejectionMatch>,
     pub code_indices: Vec<usize>,
     pub reason: String,
     pub proposal: Option<Proposal>,
@@ -277,6 +284,19 @@ impl LinearWrite {
 }
 
 pub trait InvestigationSources {
+    fn now(&self) -> DateTime<Utc> {
+        Utc::now()
+    }
+    fn rejection_decision(
+        &mut self,
+        _: &Ticket,
+        _: &[String],
+    ) -> Result<Option<RejectionDecision>> {
+        Ok(None)
+    }
+    fn rejection_reason(&mut self, _: &RejectionDecision) -> Result<Option<RejectionReason>> {
+        Ok(None)
+    }
     fn tickets(&mut self, product: &ProductConfig) -> Result<Vec<Ticket>>;
     fn ticket(&mut self, id: &str) -> Result<Ticket>;
     fn pull_requests(
@@ -349,6 +369,7 @@ impl Workflow {
         if !report.productReport.needs_identity_review {
             state::claim_scopes(&self.connection, product)?;
         }
+        let weekly = WeeklyEvidence::load(&self.connection, &report, root_id)?;
         let mut stored = match state::load(&self.connection, product_id, root_id)? {
             Some(stored) if !stored.needs_identity_review => {
                 // Either the current report is from the first review or it's a later review of the same report.
@@ -360,12 +381,12 @@ impl Workflow {
                 stored
             }
             _ => {
-                let stored = plan(&self.connection, &report, product, sources, model)?;
+                let stored = plan(&self.connection, &report, product, sources, model, weekly)?;
                 state::save(&self.connection, root_id, &stored)?;
                 stored
             }
         };
-        stored.deliver(&self.connection, root_id, product, sources)?;
+        stored.deliver(&self.connection, root_id, product, sources, weekly)?;
         Ok(stored.into_report())
     }
 
@@ -404,9 +425,10 @@ fn plan(
     product: &ProductConfig,
     sources: &mut impl InvestigationSources,
     model: &mut impl InvestigationModel,
+    weekly: WeeklyEvidence,
 ) -> Result<state::StoredInvestigation> {
     let analysis = &report.productReport;
-    let mut stored = state::StoredInvestigation::new(report, analysis.needs_identity_review);
+    let mut stored = state::StoredInvestigation::new(report, product);
     if analysis.needs_identity_review {
         return Ok(stored);
     }
@@ -451,7 +473,9 @@ fn plan(
             pull_requests: &pull_requests,
             repositories: &repositories,
         };
-        stored.findings(investigate_need(report, &context, product, sources, model)?);
+        stored.findings(investigate_need(
+            report, &context, product, sources, model, weekly,
+        )?);
     }
     Ok(stored)
 }
@@ -494,6 +518,7 @@ fn investigate_need(
     product: &ProductConfig,
     sources: &mut impl InvestigationSources,
     model: &mut impl InvestigationModel,
+    weekly: WeeklyEvidence,
 ) -> Result<Vec<(Finding, Option<LinearWrite>)>> {
     let review = |reason: String| {
         Ok(vec![(
@@ -535,9 +560,15 @@ fn investigate_need(
             .iter()
             .filter_map(|&index| context.demand.variants.get(index).cloned())
             .collect();
-        let evidence = context.demand.clone();
-        let finding = classify_finding(report, context, product, &code, decision, variants)
-            .unwrap_or_else(|error| (Finding::review(evidence, error.to_string()), None));
+        let outcome = rejection::evaluate(&decision, context, sources, weekly)?;
+        let finding =
+            classify_finding(report, context, product, &code, decision, variants, outcome)
+                .unwrap_or_else(|error| {
+                    (
+                        Finding::review(context.demand.clone(), error.to_string()),
+                        None,
+                    )
+                });
         findings.push(finding);
     }
     Ok(findings)
@@ -594,24 +625,34 @@ fn classify_finding(
     code: &[CodeEvidence],
     decision: Assessment,
     variants: Vec<String>,
+    rejection: Outcome,
 ) -> Result<(Finding, Option<LinearWrite>)> {
     ensure!(
         !decision.reason.trim().is_empty(),
         "investigation did not explain its finding"
     );
-    let tickets = |ids: &[String]| {
-        ids.iter()
-            .map(|id| {
-                context
-                    .tickets
-                    .iter()
-                    .find(|ticket| ticket.id == *id)
-                    .context("investigation cited an issue outside the product's search results")
-            })
-            .collect::<Result<Vec<_>>>()
+    let ticket = |id: &str| {
+        context
+            .tickets
+            .iter()
+            .find(|ticket| ticket.id == id)
+            .context("investigation cited an issue outside the product's search results")
     };
-    let matching = tickets(&decision.matching_ticket_ids)?;
-    let related = tickets(&decision.related_ticket_ids)?;
+    let matching = decision
+        .matching_ticket_ids
+        .iter()
+        .map(|id| ticket(id))
+        .collect::<Result<Vec<_>>>()?;
+    let related = decision
+        .related_ticket_ids
+        .iter()
+        .map(|id| ticket(id))
+        .collect::<Result<Vec<_>>>()?;
+    let rejected = decision
+        .rejection_matches
+        .iter()
+        .map(|item| ticket(&item.ticket_id))
+        .collect::<Result<Vec<_>>>()?;
     let cited_code = decision
         .code_indices
         .iter()
@@ -628,6 +669,7 @@ fn classify_finding(
                 .context("investigation selected an unconfigured repository")
         })
         .transpose()?;
+    let mut seen_urls = BTreeSet::new();
     let mut finding = Finding {
         need: context.demand.clone(),
         variants,
@@ -637,18 +679,26 @@ fn classify_finding(
         tickets: matching
             .iter()
             .chain(&related)
+            .chain(&rejected)
+            .filter(|ticket| seen_urls.insert(&ticket.url))
             .map(|ticket| ticket.url.clone())
             .collect(),
         code: cited_code.iter().map(|code| code_url(code)).collect(),
         write: None,
         operation_id: None,
+        rejection: None,
     };
-    if matching
-        .iter()
-        .any(|ticket| product.not_needed_state_ids.contains(&ticket.state_id))
-    {
-        finding.kind = FindingKind::RejectedWork;
-        return Ok((finding, None));
+    match rejection {
+        Outcome::Proceed(evidence) => finding.rejection = evidence,
+        Outcome::Suppressed(reason) => {
+            finding.kind = FindingKind::RejectedWork;
+            finding.reason = reason;
+            return Ok((finding, None));
+        }
+        Outcome::Review(reason) => {
+            finding.reason = reason;
+            return Ok((finding, None));
+        }
     }
     if matches!(decision.kind, AssessmentKind::Uncertain) {
         return Ok((finding, None));
@@ -662,14 +712,19 @@ fn classify_finding(
         finding.reason = format!("Repository ownership needs review. {}", finding.reason);
         return Ok((finding, None));
     };
-    if matching.iter().chain(&related).any(|ticket| {
-        ticket.pull_request_urls.iter().any(|url| {
-            !context
-                .pull_requests
-                .iter()
-                .any(|pull_request| pull_request.url == *url)
+    if matching
+        .iter()
+        .chain(&related)
+        .chain(&rejected)
+        .any(|ticket| {
+            ticket.pull_request_urls.iter().any(|url| {
+                !context
+                    .pull_requests
+                    .iter()
+                    .any(|pull_request| pull_request.url == *url)
+            })
         })
-    }) {
+    {
         finding.reason = format!(
             "A linked pull request could not be inspected within the product scope. {}",
             finding.reason
@@ -695,7 +750,7 @@ fn classify_finding(
                 return Ok((finding, None));
             };
             finding.kind = FindingKind::Proposal;
-            let body = format!(
+            let mut body = format!(
                 "## Proposed behavior\n\n{}\n\n## Assumptions\n\n{}\n\n## Acceptance criteria\n\n{}\n\n## Scope boundaries\n\n{}\n\n{}",
                 proposal.behavior,
                 bullets(&proposal.assumptions, "- "),
@@ -703,6 +758,26 @@ fn classify_finding(
                 bullets(&proposal.scope_boundaries, "- "),
                 evidence_markdown(report, &finding),
             );
+            if let Some(rejection) = &finding.rejection {
+                let previous = rejection
+                    .decisions
+                    .first()
+                    .context("reconsideration is missing the rejection decision")?;
+                let ticket = rejected
+                    .iter()
+                    .find(|ticket| ticket.id == previous.ticket_id)
+                    .context("reconsideration is missing the rejected ticket")?;
+                let reason = rejection
+                    .reason
+                    .as_ref()
+                    .context("reconsideration is missing the rejection reason")?;
+                body.push_str(&format!(
+                    "\n\n## Prior rejection\n\n{}\n\nDecision recorded at {}. This proposal requires fresh approval.\n\n{}",
+                    ticket.url,
+                    previous.decided_at.to_rfc3339(),
+                    bullets(&reason.text.lines().map(str::to_owned).collect::<Vec<_>>(), "> "),
+                ));
+            }
             Some(LinearWrite::Create {
                 operation_id: uuid::Uuid::new_v4().to_string(),
                 destination: route.destination.clone(),
