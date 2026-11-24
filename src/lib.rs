@@ -108,7 +108,9 @@ pub struct Report {
     pub end: DateTime<Utc>,
     pub input: AnalysisInput,
     pub classifications: Vec<Classification>,
-    pub product: ProductReport,
+    #[allow(non_snake_case)]
+    #[serde(rename = "product")]
+    pub productReport: ProductReport,
 }
 
 // The row's primary key is the report ID; it is not duplicated in the JSON.
@@ -120,7 +122,9 @@ struct StoredReport {
     end: DateTime<Utc>,
     input: AnalysisInput,
     classifications: Vec<Classification>,
-    product: ProductReport,
+    #[allow(non_snake_case)]
+    #[serde(rename = "product")]
+    productReport: ProductReport,
 }
 
 impl StoredReport {
@@ -144,7 +148,7 @@ impl StoredReport {
             end: self.end,
             input: self.input,
             classifications: self.classifications,
-            product: self.product,
+            productReport: self.productReport,
         }
     }
 }
@@ -304,7 +308,12 @@ impl Workflow {
             .map(|(identity, needs)| NeedCandidate { identity, needs })
             .collect();
         let mut result = Vec::new();
-        for report_need in report.product.needs.iter().filter(|n| n.identity.is_none()) {
+        for report_need in report
+            .productReport
+            .needs
+            .iter()
+            .filter(|n| n.identity.is_none())
+        {
             if aliases.contains_key(&report_need.need.to_lowercase()) {
                 continue;
             }
@@ -442,7 +451,7 @@ impl Workflow {
             end,
             input,
             classifications,
-            product: ProductReport {
+            productReport: ProductReport {
                 product_id: product_id.to_owned(),
                 denominator,
                 needs_identity_review,
@@ -467,7 +476,7 @@ impl Workflow {
                 .feedback
                 .iter()
                 .all(|row| row.product_id == product_id)
-                && report.product.product_id == product_id,
+                && report.productReport.product_id == product_id,
             "saved report data does not match its product scope"
         );
         Ok(report.into_report(id, stored_product))

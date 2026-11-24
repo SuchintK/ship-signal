@@ -346,7 +346,7 @@ impl Workflow {
             .context("open investigation lock")?;
         lock.try_lock().context("acquire investigation lock")?;
 
-        if !report.product.needs_identity_review {
+        if !report.productReport.needs_identity_review {
             state::claim_scopes(&self.connection, product)?;
         }
         let mut stored = match state::load(&self.connection, product_id, root_id)? {
@@ -405,7 +405,7 @@ fn plan(
     sources: &mut impl InvestigationSources,
     model: &mut impl InvestigationModel,
 ) -> Result<state::StoredInvestigation> {
-    let analysis = &report.product;
+    let analysis = &report.productReport;
     let mut stored = state::StoredInvestigation::new(report, analysis.needs_identity_review);
     if analysis.needs_identity_review {
         return Ok(stored);
@@ -481,7 +481,7 @@ fn demand_evidence(report: &Report, need: &NeedReport) -> Result<DemandEvidence>
             .clone()
             .context("eligible need has no reviewed identity")?,
         customer_count: need.customer_count,
-        denominator: report.product.denominator,
+        denominator: report.productReport.denominator,
         percentage: need.percentage,
         variants: need.variants.clone(),
         message_indices: need.message_indices.clone(),

@@ -57,9 +57,9 @@ fn completed_report_survives_changed_source_and_classifier() -> anyhow::Result<(
     drop(workflow);
     let workflow = Workflow::open(&path)?;
     assert_eq!(workflow.report("shop", report.id)?, report);
-    assert_eq!(report.product.denominator, 1);
-    assert_eq!(report.product.needs[0].customer_count, 1);
-    assert!(report.product.needs[0].qualifies);
+    assert_eq!(report.productReport.denominator, 1);
+    assert_eq!(report.productReport.needs[0].customer_count, 1);
+    assert!(report.productReport.needs[0].qualifies);
     Ok(())
 }
 
@@ -109,7 +109,7 @@ fn counts_distinct_customers_per_product_and_preserves_variant_evidence() -> any
                 .collect())
         },
     )?;
-    let product = &report.product;
+    let product = &report.productReport;
     assert_eq!(product.denominator, 4);
     let export = product.needs.iter().find(|n| n.need == "export").unwrap();
     assert_eq!(
@@ -159,8 +159,8 @@ fn unidentified_and_bug_only_feedback_cannot_qualify() -> anyhow::Result<()> {
             ])
         },
     )?;
-    assert_eq!(report.product.denominator, 0);
-    assert!(!report.product.needs[0].qualifies);
+    assert_eq!(report.productReport.denominator, 0);
+    assert!(!report.productReport.needs[0].qualifies);
     Ok(())
 }
 
@@ -189,7 +189,7 @@ fn confirmed_need_identity_connects_needs_across_reports_without_changing_old_ev
         "2026-11-13T00:00:00Z".parse()?,
         classify("CSV export"),
     )?;
-    assert_eq!(old.product.needs[0].identity, None);
+    assert_eq!(old.productReport.needs[0].identity, None);
     workflow.assign_need_identity("shop", "CSV export", "export-data")?;
     workflow.assign_need_identity("shop", "download data as CSV", "export-data")?;
     drop(workflow);
@@ -209,11 +209,11 @@ fn confirmed_need_identity_connects_needs_across_reports_without_changing_old_ev
         classify("download data as CSV"),
     )?;
     assert_eq!(
-        first.product.needs[0].identity.as_deref(),
+        first.productReport.needs[0].identity.as_deref(),
         Some("export-data")
     );
     assert_eq!(
-        second.product.needs[0].identity.as_deref(),
+        second.productReport.needs[0].identity.as_deref(),
         Some("export-data")
     );
     assert_eq!(workflow.report("shop", old.id)?, old);
@@ -272,19 +272,19 @@ fn confirmed_aliases_combine_demand_only_within_the_same_product() -> anyhow::Re
         classify,
     )?;
     assert_eq!(shop.product_id, "shop");
-    assert_eq!(shop.product.product_id, "shop");
-    assert_eq!(shop.product.denominator, 2);
-    assert_eq!(shop.product.needs.len(), 1);
+    assert_eq!(shop.productReport.product_id, "shop");
+    assert_eq!(shop.productReport.denominator, 2);
+    assert_eq!(shop.productReport.needs.len(), 1);
     assert_eq!(
-        shop.product.needs[0].identity.as_deref(),
+        shop.productReport.needs[0].identity.as_deref(),
         Some("export-data")
     );
-    assert_eq!(shop.product.needs[0].customer_count, 2);
-    assert_eq!(shop.product.needs[0].message_indices, vec![0, 1]);
+    assert_eq!(shop.productReport.needs[0].customer_count, 2);
+    assert_eq!(shop.productReport.needs[0].message_indices, vec![0, 1]);
     assert_eq!(other.product_id, "other-shop");
-    assert_eq!(other.product.product_id, "other-shop");
-    assert_eq!(other.product.denominator, 1);
-    assert_eq!(other.product.needs[0].identity, None);
+    assert_eq!(other.productReport.product_id, "other-shop");
+    assert_eq!(other.productReport.denominator, 1);
+    assert_eq!(other.productReport.needs[0].identity, None);
     assert_eq!(workflow.need_identity_aliases("shop")?.len(), 2);
     assert_eq!(workflow.need_identity_aliases("other-shop")?.len(), 1);
     Ok(())
@@ -326,7 +326,10 @@ fn explicit_identity_correction_changes_future_analyses_without_rewriting_histor
         "2026-11-20T00:00:00Z".parse()?,
         classify,
     )?;
-    assert_eq!(after.product.needs[0].identity.as_deref(), Some("right"));
+    assert_eq!(
+        after.productReport.needs[0].identity.as_deref(),
+        Some("right")
+    );
     assert_eq!(workflow.report("shop", before.id)?, before);
     Ok(())
 }
@@ -364,15 +367,15 @@ fn reviewed_report_recalculates_saved_classifications_after_mapping_without_rewr
             ])
         },
     )?;
-    assert!(original.product.needs_identity_review);
+    assert!(original.productReport.needs_identity_review);
     workflow.assign_need_identity("shop", "CSV export", "export")?;
     workflow.assign_need_identity("shop", "download CSV", "export")?;
     source.0.clear();
     let reviewed = workflow.review_report("shop", original.id)?;
     assert_ne!(original.id, reviewed.id);
-    assert!(!reviewed.product.needs_identity_review);
-    assert_eq!(reviewed.product.needs.len(), 1);
-    assert_eq!(reviewed.product.needs[0].customer_count, 2);
+    assert!(!reviewed.productReport.needs_identity_review);
+    assert_eq!(reviewed.productReport.needs.len(), 1);
+    assert_eq!(reviewed.productReport.needs[0].customer_count, 2);
     assert_eq!(reviewed.input, original.input);
     assert_eq!(reviewed.classifications, original.classifications);
     assert_eq!(workflow.report("shop", original.id)?, original);
@@ -494,17 +497,17 @@ fn interactive_review_confirms_suggestions_and_keeps_deferred_needs_unresolved()
     assert!(output.contains("CSV download"));
     assert!(output.contains("Related export request"));
     assert!(output.contains("Dark mode"));
-    assert!(reviewed.product.needs_identity_review);
+    assert!(reviewed.productReport.needs_identity_review);
     assert!(
         reviewed
-            .product
+            .productReport
             .needs
             .iter()
             .any(|n| n.identity.as_deref() == Some("export"))
     );
     assert!(
         reviewed
-            .product
+            .productReport
             .needs
             .iter()
             .any(|n| n.identity.is_none() && n.need == "Dark mode")
@@ -579,8 +582,8 @@ fn quitting_review_saves_only_confirmed_decisions_and_can_resume() -> anyhow::Re
             },
         )?
         .unwrap();
-    assert!(!resumed.product.needs_identity_review);
-    assert_eq!(resumed.product.needs[0].customer_count, 2);
+    assert!(!resumed.productReport.needs_identity_review);
+    assert_eq!(resumed.productReport.needs[0].customer_count, 2);
     assert_eq!(workflow.report("shop", original.id)?, original);
     Ok(())
 }
@@ -698,7 +701,7 @@ fn deferred_decisions_survive_quit_and_can_be_explicitly_reopened() -> anyhow::R
             },
         )?
         .unwrap();
-    assert!(reviewed.product.needs_identity_review);
+    assert!(reviewed.productReport.needs_identity_review);
     let complete = workflow
         .review_needs(
             "shop",
@@ -716,7 +719,7 @@ fn deferred_decisions_survive_quit_and_can_be_explicitly_reopened() -> anyhow::R
             },
         )?
         .unwrap();
-    assert!(!complete.product.needs_identity_review);
+    assert!(!complete.productReport.needs_identity_review);
     Ok(())
 }
 
@@ -829,10 +832,10 @@ fn empty_reports_keep_product_ownership_and_reject_cross_product_operations() ->
         },
     )?;
     assert_eq!(original.product_id, "shop");
-    assert_eq!(original.product.product_id, "shop");
-    assert_eq!(original.product.denominator, 0);
-    assert!(original.product.needs.is_empty());
-    assert!(!original.product.needs_identity_review);
+    assert_eq!(original.productReport.product_id, "shop");
+    assert_eq!(original.productReport.denominator, 0);
+    assert!(original.productReport.needs.is_empty());
+    assert!(!original.productReport.needs_identity_review);
     assert!(workflow.report("other-shop", original.id).is_err());
     assert!(workflow.review_report("other-shop", original.id).is_err());
     assert!(
@@ -857,7 +860,7 @@ fn empty_reports_keep_product_ownership_and_reject_cross_product_operations() ->
     assert_eq!(reviewed.product_id, "shop");
     // The review links back to the input report for the same product.
     assert_eq!(reviewed.reviewed_from, Some(original.id));
-    assert_eq!(reviewed.product, original.product);
+    assert_eq!(reviewed.productReport, original.productReport);
     Ok(())
 }
 
@@ -945,21 +948,21 @@ fn need_identity_matching_ignores_case_and_preserves_classifications() -> anyhow
     assert!(workflow.need_review_queue("shop", original.id)?.is_empty());
     let reviewed = workflow.review_report("shop", original.id)?;
     assert_eq!(reviewed.classifications, classifications);
-    assert_eq!(reviewed.product.needs.len(), 1);
+    assert_eq!(reviewed.productReport.needs.len(), 1);
     assert_eq!(
-        reviewed.product.needs[0].identity.as_deref(),
+        reviewed.productReport.needs[0].identity.as_deref(),
         Some("export-orders")
     );
-    assert_eq!(reviewed.product.needs[0].customer_count, 2);
-    assert_eq!(reviewed.product.needs[0].variants, ["CSV", "PDF"]);
-    assert!(!reviewed.product.needs_identity_review);
+    assert_eq!(reviewed.productReport.needs[0].customer_count, 2);
+    assert_eq!(reviewed.productReport.needs[0].variants, ["CSV", "PDF"]);
+    assert!(!reviewed.productReport.needs_identity_review);
     assert_eq!(workflow.report("shop", original.id)?, original);
     drop(workflow);
     let mut workflow = Workflow::open(&path)?;
     let analyzed = workflow.analyze("shop", &mut source, original.start, original.end, |_| {
         Ok(classifications.clone())
     })?;
-    assert_eq!(analyzed.product, reviewed.product);
+    assert_eq!(analyzed.productReport, reviewed.productReport);
     assert_eq!(analyzed.classifications, classifications);
     Ok(())
 }
@@ -1010,7 +1013,7 @@ fn case_insensitive_mappings_are_guarded_and_product_scoped() -> anyhow::Result<
         },
     )?;
     assert_eq!(
-        report.product.needs[0].identity.as_deref(),
+        report.productReport.needs[0].identity.as_deref(),
         Some("corrected")
     );
     assert_eq!(
